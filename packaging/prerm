@@ -1,0 +1,12 @@
+#!/var/jb/bin/sh
+PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:$PATH
+PLIST=/var/jb/Library/LaunchDaemons/com.wifitether.daemon.plist
+
+# Stopping the service removes its routing rules.
+launchctl unload "$PLIST" >/dev/null 2>&1 || true
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    uicache -u /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
+fi
+
+exit 0

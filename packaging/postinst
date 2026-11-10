@@ -1,0 +1,13 @@
+#!/var/jb/bin/sh
+PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:$PATH
+PLIST=/var/jb/Library/LaunchDaemons/com.wifitether.daemon.plist
+
+mkdir -p /var/mobile/Library/WiFiTether
+chown 501:501 /var/mobile/Library/WiFiTether
+
+uicache -p /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
+
+launchctl unload "$PLIST" >/dev/null 2>&1 || true
+launchctl load -w "$PLIST" || true
+
+exit 0

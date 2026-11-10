@@ -1,0 +1,9 @@
+Package: com.wifitether
+Name: WiFi Tether
+Version: @VERSION@
+Architecture: iphoneos-arm64
+Section: Networking
+Depends: firmware (>= 15.0)
+Maintainer: WiFi Tether
+Author: WiFi Tether
+Description: Share the iPhone's Wi-Fi connection with a computer over USB. Needs Personal Hotspot to be available (for example with the Share tweak).
