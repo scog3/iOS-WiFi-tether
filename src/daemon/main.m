@@ -14,8 +14,11 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/param.h>
 #include <sys/sysctl.h>
 #include <sys/stat.h>
+#include <stdlib.h>
+#include <limits.h>
 #include <notify.h>
 #include <dlfcn.h>
 #include <signal.h>
@@ -158,8 +161,11 @@ static void restoreFwd(void)
     }
 }
 
+static void dhcpRestore(void);
+
 static void teardown(void)
 {
+    dhcpRestore();
     if (!g_applied)
         return;
     pfn_clear(g_anchor, NULL, 0);
@@ -177,6 +183,131 @@ static NSString *ipStr(in_addr_t a)
     x.s_addr = a;
     inet_ntop(AF_INET, &x, b, sizeof(b));
     return [NSString stringWithUTF8String:b];
+}
+
+/* ── Gateway and DNS for hotspot clients ──────────────────────────
+ * misd's local hotspot mode configures Apple's DHCP server (bootpd) without a
+ * router or DNS option, so clients get an address but no way out. Add both,
+ * pointing at the phone, and tell bootpd to reload. misd may rewrite the file
+ * when the hotspot restarts; the 2-second check puts the entries back. */
+#define BOOTPD_PLIST "/Library/Preferences/SystemConfiguration/bootpd.plist"
+#define WT_MARK @"_wifitether"
+
+static void signalBootpd(void)
+{
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
+    size_t len = 0;
+    struct kinfo_proc *procs;
+    size_t n, i;
+
+    if (sysctl(mib, 3, NULL, &len, NULL, 0) != 0 || len == 0)
+        return;
+    len += len / 4;
+    procs = malloc(len);
+    if (!procs)
+        return;
+    if (sysctl(mib, 3, procs, &len, NULL, 0) == 0) {
+        n = len / sizeof(struct kinfo_proc);
+        for (i = 0; i < n; i++)
+            if (strcmp(procs[i].kp_proc.p_comm, "bootpd") == 0)
+                kill(procs[i].kp_proc.p_pid, SIGHUP); /* bootpd re-reads its settings */
+    }
+    free(procs);
+}
+
+/* Rewrites bootpd.plist through `edit`; returns 1 if the file changed. */
+static int editBootpd(BOOL (^edit)(NSMutableDictionary *root))
+{
+    char real[PATH_MAX];
+    struct stat info;
+    NSString *path;
+    NSData *data, *out;
+    NSMutableDictionary *root;
+    NSPropertyListFormat format = NSPropertyListXMLFormat_v1_0;
+
+    if (!realpath(BOOTPD_PLIST, real) || stat(real, &info) != 0)
+        return 0;
+    path = [NSString stringWithUTF8String:real];
+    data = [NSData dataWithContentsOfFile:path];
+    if (!data)
+        return 0;
+    root = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers
+                                                      format:&format error:NULL];
+    if (![root isKindOfClass:[NSMutableDictionary class]] || !edit(root))
+        return 0;
+    out = [NSPropertyListSerialization dataWithPropertyList:root format:format options:0 error:NULL];
+    if (!out || ![out writeToFile:path atomically:YES])
+        return 0;
+    chown(real, info.st_uid, info.st_gid);
+    chmod(real, info.st_mode & 07777);
+    signalBootpd();
+    return 1;
+}
+
+/* Returns 1 if the hotspot subnet now hands out the phone as gateway and DNS. */
+static int dhcpEnsure(const WTIf *lan)
+{
+    __block int found = 0;
+    NSString *ifname = [NSString stringWithUTF8String:lan->name];
+    NSString *gw = ipStr(lan->ip);
+    NSString *net = ipStr(lan->ip & lan->mask);
+
+    int changed = editBootpd(^BOOL(NSMutableDictionary *root) {
+        BOOL dirty = NO;
+        NSArray *subnets = root[@"Subnets"];
+        if (![subnets isKindOfClass:[NSArray class]])
+            return NO;
+        for (NSMutableDictionary *s in subnets) {
+            if (![s isKindOfClass:[NSMutableDictionary class]])
+                continue;
+            if (![s[@"interface"] isEqual:ifname] && ![s[@"net_address"] isEqual:net])
+                continue;
+            found = 1;
+            if (![s[@"dhcp_router"] isEqual:@[gw]]) {
+                s[@"dhcp_router"] = @[gw];
+                dirty = YES;
+            }
+            if (s[@"dhcp_domain_name_server"] == nil || [s[WT_MARK] boolValue]) {
+                if (![s[@"dhcp_domain_name_server"] isEqual:@[gw]]) {
+                    s[@"dhcp_domain_name_server"] = @[gw];
+                    dirty = YES;
+                }
+            }
+            if (![s[WT_MARK] boolValue]) {
+                s[WT_MARK] = @YES;
+                dirty = YES;
+            }
+        }
+        return dirty;
+    });
+    if (changed)
+        NSLog(@"wifitetherd: hotspot DHCP now gives gateway/DNS %@", gw);
+    if (!found) {
+        /* Check whether it was already set (nothing changed). */
+        NSDictionary *root = [NSDictionary dictionaryWithContentsOfFile:@BOOTPD_PLIST];
+        for (NSDictionary *s in root[@"Subnets"])
+            if ([s isKindOfClass:[NSDictionary class]] && [s[@"dhcp_router"] isEqual:@[gw]])
+                found = 1;
+    }
+    return found;
+}
+
+/* Remove what dhcpEnsure added. */
+static void dhcpRestore(void)
+{
+    editBootpd(^BOOL(NSMutableDictionary *root) {
+        BOOL dirty = NO;
+        NSArray *subnets = root[@"Subnets"];
+        if (![subnets isKindOfClass:[NSArray class]])
+            return NO;
+        for (NSMutableDictionary *s in subnets) {
+            if (![s isKindOfClass:[NSMutableDictionary class]] || ![s[WT_MARK] boolValue])
+                continue;
+            [s removeObjectsForKeys:@[@"dhcp_router", @"dhcp_domain_name_server", WT_MARK]];
+            dirty = YES;
+        }
+        return dirty;
+    });
 }
 
 static void writeStatus(NSDictionary *d)
@@ -254,10 +385,16 @@ static void reconcile(void)
                 }
             }
             state = ok ? @"active" : @"error";
-            if (!ok)
+            if (!ok) {
                 detail = [NSString stringWithUTF8String:err];
-            else if (g_anchor[0])
-                detail = [NSString stringWithFormat:@"Rules loaded in anchor %s", g_anchor];
+            } else {
+                int gwOk = dhcpEnsure(&lan);
+                st[@"gateway"] = @(gwOk);
+                if (!gwOk)
+                    detail = @"Couldn't add the gateway to the hotspot's DHCP settings; set it manually on the computer.";
+                else if (g_anchor[0])
+                    detail = [NSString stringWithFormat:@"Rules loaded in anchor %s", g_anchor];
+            }
         }
 
         st[@"state"] = state;

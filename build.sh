@@ -43,6 +43,8 @@ mkdir -p "$S/DEBIAN" "$APP" "$S/var/jb/usr/libexec" "$S/var/jb/Library/LaunchDae
 
 cp "$B/WiFiTether" "$APP/WiFiTether"
 sed "s/@VERSION@/$VERSION/g" src/app/Info.plist > "$APP/Info.plist"
+cp src/app/icons/AppIcon*.png "$APP/"
+chmod 644 "$APP"/AppIcon*.png
 cp "$B/wifitetherd" "$S/var/jb/usr/libexec/wifitetherd"
 cp packaging/com.wifitether.daemon.plist "$S/var/jb/Library/LaunchDaemons/"
 
