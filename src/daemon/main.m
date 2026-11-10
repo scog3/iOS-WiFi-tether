@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <fcntl.h>
 #include <notify.h>
 #include <dlfcn.h>
 #include <signal.h>
@@ -44,7 +45,7 @@ static char g_key[160];
 static char g_anchor[64];
 static int  g_savedFwd = -1;
 
-static dispatch_source_t g_timer, g_sigterm, g_sigint;
+static dispatch_source_t g_timer, g_sigterm, g_sigint, g_dirWatch;
 static int g_notifyToken;
 
 static void ensureDir(void)
@@ -161,11 +162,8 @@ static void restoreFwd(void)
     }
 }
 
-static void dhcpRestore(void);
-
 static void teardown(void)
 {
-    dhcpRestore();
     if (!g_applied)
         return;
     pfn_clear(g_anchor, NULL, 0);
@@ -244,25 +242,47 @@ static int editBootpd(BOOL (^edit)(NSMutableDictionary *root))
     return 1;
 }
 
-/* Returns 1 if the hotspot subnet now hands out the phone as gateway and DNS. */
-static int dhcpEnsure(const WTIf *lan)
+/* The phone's own address on a hotspot subnet: from its name ("172.20.10.1/28"),
+ * otherwise the first address after net_address. */
+static NSString *subnetGateway(NSDictionary *s)
 {
-    __block int found = 0;
-    NSString *ifname = [NSString stringWithUTF8String:lan->name];
-    NSString *gw = ipStr(lan->ip);
-    NSString *net = ipStr(lan->ip & lan->mask);
+    struct in_addr a;
+    NSString *name = s[@"name"], *net = s[@"net_address"];
+    if ([name isKindOfClass:[NSString class]]) {
+        NSString *ip = [name componentsSeparatedByString:@"/"].firstObject;
+        if (inet_pton(AF_INET, ip.UTF8String, &a) == 1)
+            return ip;
+    }
+    if ([net isKindOfClass:[NSString class]] && inet_pton(AF_INET, net.UTF8String, &a) == 1)
+        return ipStr(htonl(ntohl(a.s_addr) + 1));
+    return nil;
+}
 
+static BOOL isHotspotSubnet(NSDictionary *s)
+{
+    return [s isKindOfClass:[NSDictionary class]] &&
+        ([s[@"_creator"] isEqual:@"com.apple.MobileInternetSharing"] ||
+         ([s[@"interface"] isKindOfClass:[NSString class]] && [s[@"interface"] hasPrefix:@"bridge"]));
+}
+
+/* Make every hotspot subnet hand out the phone as gateway and DNS.
+ * Returns 1 if the file now has a gateway for the hotspot. */
+static int dhcpEnsure(void)
+{
+    __block int ready = 0;
     int changed = editBootpd(^BOOL(NSMutableDictionary *root) {
         BOOL dirty = NO;
         NSArray *subnets = root[@"Subnets"];
         if (![subnets isKindOfClass:[NSArray class]])
             return NO;
         for (NSMutableDictionary *s in subnets) {
-            if (![s isKindOfClass:[NSMutableDictionary class]])
+            NSString *gw;
+            if (![s isKindOfClass:[NSMutableDictionary class]] || !isHotspotSubnet(s))
                 continue;
-            if (![s[@"interface"] isEqual:ifname] && ![s[@"net_address"] isEqual:net])
+            gw = subnetGateway(s);
+            if (!gw)
                 continue;
-            found = 1;
+            ready = 1;
             if (![s[@"dhcp_router"] isEqual:@[gw]]) {
                 s[@"dhcp_router"] = @[gw];
                 dirty = YES;
@@ -281,15 +301,8 @@ static int dhcpEnsure(const WTIf *lan)
         return dirty;
     });
     if (changed)
-        NSLog(@"wifitetherd: hotspot DHCP now gives gateway/DNS %@", gw);
-    if (!found) {
-        /* Check whether it was already set (nothing changed). */
-        NSDictionary *root = [NSDictionary dictionaryWithContentsOfFile:@BOOTPD_PLIST];
-        for (NSDictionary *s in root[@"Subnets"])
-            if ([s isKindOfClass:[NSDictionary class]] && [s[@"dhcp_router"] isEqual:@[gw]])
-                found = 1;
-    }
-    return found;
+        NSLog(@"wifitetherd: hotspot DHCP now gives the phone as gateway/DNS");
+    return ready;
 }
 
 /* Remove what dhcpEnsure added. */
@@ -329,6 +342,16 @@ static void reconcile(void)
         st[@"enabled"] = @(en);
         st[@"wifi"] = up.ok ? ipStr(up.ip) : @"";
         st[@"hotspot"] = lan.ok ? [NSString stringWithFormat:@"%@ on %s", ipStr(lan.ip), lan.name] : @"";
+
+        /* Gateway entries stay as long as sharing is switched on, so a client
+         * that connects while Wi-Fi or the hotspot is still coming up still
+         * gets them. */
+        int gwOk = 0;
+        if (en)
+            gwOk = dhcpEnsure();
+        else
+            dhcpRestore();
+        st[@"gateway"] = @(gwOk);
 
         if (!en || !up.ok || !lan.ok) {
             teardown();
@@ -388,8 +411,6 @@ static void reconcile(void)
             if (!ok) {
                 detail = [NSString stringWithUTF8String:err];
             } else {
-                int gwOk = dhcpEnsure(&lan);
-                st[@"gateway"] = @(gwOk);
                 if (!gwOk)
                     detail = @"Couldn't add the gateway to the hotspot's DHCP settings; set it manually on the computer.";
                 else if (g_anchor[0])
@@ -411,12 +432,35 @@ static dispatch_source_t watchSignal(int sig)
     s = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, sig, 0, dispatch_get_main_queue());
     dispatch_source_set_event_handler(s, ^{
         teardown();
+        dhcpRestore();
         writeStatus(@{ @"state": @"stopped", @"detail": @"",
                        @"updated": @0, @"enabled": @(isEnabled()) });
         exit(0);
     });
     dispatch_resume(s);
     return s;
+}
+
+/* misd replaces bootpd.plist when the hotspot starts; that changes the
+ * directory, so re-add the gateway straight away, before any client asks. */
+static void watchBootpdDir(void)
+{
+    char real[PATH_MAX];
+    int fd;
+    if (!realpath("/Library/Preferences/SystemConfiguration", real))
+        return;
+    fd = open(real, O_EVTONLY);
+    if (fd < 0)
+        return;
+    g_dirWatch = dispatch_source_create(DISPATCH_SOURCE_TYPE_VNODE, fd,
+                                        DISPATCH_VNODE_WRITE | DISPATCH_VNODE_EXTEND,
+                                        dispatch_get_main_queue());
+    dispatch_source_set_event_handler(g_dirWatch, ^{
+        if (isEnabled())
+            dhcpEnsure();
+    });
+    dispatch_source_set_cancel_handler(g_dirWatch, ^{ close(fd); });
+    dispatch_resume(g_dirWatch);
 }
 
 int main(int argc, char **argv)
@@ -430,9 +474,11 @@ int main(int argc, char **argv)
             reconcile();
         });
 
+        watchBootpdDir();
+
         g_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        dispatch_source_set_timer(g_timer, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
-                                  2 * NSEC_PER_SEC, NSEC_PER_SEC / 4);
+        dispatch_source_set_timer(g_timer, dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC),
+                                  1 * NSEC_PER_SEC, NSEC_PER_SEC / 10);
         dispatch_source_set_event_handler(g_timer, ^{ reconcile(); });
         dispatch_resume(g_timer);
 
