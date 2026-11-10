@@ -84,7 +84,7 @@ void pfn_stop(void)
     if (g_started == 1) {
         struct pfioc_remove_token rt;
         memset(&rt, 0, sizeof(rt));
-        rt.token = g_token;
+        memcpy(&rt, &g_token, sizeof(g_token));
         ioctl(g_fd, DIOCSTOPREF, &rt);
     }
 #endif
