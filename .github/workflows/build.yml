@@ -9,18 +9,25 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install tools
-        run: brew install ldid dpkg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld dpkg git curl
+          if ! sudo apt-get install -y -qq ldid; then
+            sudo curl -fsSL -o /usr/local/bin/ldid \
+              https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64
+            sudo chmod +x /usr/local/bin/ldid
+          fi
 
       - name: Build
         shell: bash
         run: |
           set -o pipefail
-          bash build.sh 2>&1 | tee build.log
+          bash build-linux.sh 2>&1 | tee build.log
 
       - name: Publish the .deb as the "latest" release
         env:
