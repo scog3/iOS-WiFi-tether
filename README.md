@@ -9,7 +9,7 @@ Useful when a computer has no Wi-Fi, broken Wi-Fi, or can't join a network the
 iPhone can, like a captive portal you've already signed in to on the phone.
 It's a free alternative to paid tweaks such as Tethera and TetherMe.
 
-> **Beta.** Tested on iPhone with iOS 15.8.5 (palera1n, rootless) and a Windows PC.
+> **Beta.** Tested on iPhone with iOS 15.8.5 (Dopamine, rootless) and a Windows PC.
 > Reports from other devices are welcome; please open an issue.
 
 ## What you need
