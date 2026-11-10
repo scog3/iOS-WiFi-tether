@@ -1,6 +1,6 @@
 # WiFi Tether: share a jailbroken iPhone's Wi-Fi over USB
 
-**Free, open-source tethering for rootless jailbreaks on iOS 15 and later.**
+**Free, open-source tethering for rootless jailbreaks on iOS 15 and later, on iPhone and iPad.**
 Plug your iPhone into a computer and the computer gets internet through the
 iPhone's **Wi-Fi** connection. It works without a SIM card, without mobile data
 and without a carrier tethering plan.
@@ -9,7 +9,8 @@ Useful when a computer has no Wi-Fi, broken Wi-Fi, or can't join a network the
 iPhone can, like a captive portal you've already signed in to on the phone.
 It's a free alternative to paid tweaks such as Tethera and TetherMe.
 
-> **Beta.** Tested on iPhone with iOS 15.8.5 (Dopamine, rootless) and a Windows PC.
+> **Beta.** Tested on iPhone 6s with iOS 15.8.5 (Dopamine, rootless) and a Windows PC.
+> iPads should work too, since Share supports them (including Wi-Fi-only models), but haven't been tested yet.
 > Reports from other devices are welcome; please open an issue.
 
 ## What you need
