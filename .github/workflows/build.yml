@@ -2,6 +2,9 @@ name: Build
 
 on:
   push:
+    paths-ignore:
+      - README.md
+      - LICENSE
   workflow_dispatch:
 
 permissions:
@@ -29,15 +32,39 @@ jobs:
           set -o pipefail
           bash build-linux.sh 2>&1 | tee build.log
 
-      - name: Publish the .deb as the "latest" release
+      - name: Release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          # The section of CHANGELOG.md for this version, without its heading.
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; if ($2 == v) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "No changelog entry for $VERSION." > notes.md
+          printf '\nInstall: open this page in Safari on the iPhone, tap the .deb, then open it in Filza or Sileo.\n' >> notes.md
+          cat notes.md
+
+      - name: Publish release v${{ env.VERSION }}
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest build/*.deb \
-            --target "$GITHUB_SHA" \
-            --title "Latest build" \
-            --notes "Open this page in Safari on the iPhone and tap the .deb to download it."
+          TAG="v$VERSION"
+          # The old single "latest" release from earlier builds is replaced by versioned ones.
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Same version built again: replace its .deb and notes, keep the release.
+            gh release upload "$TAG" build/*.deb --clobber
+            gh release edit "$TAG" --notes-file notes.md --latest
+          else
+            gh release create "$TAG" build/*.deb \
+              --target "$GITHUB_SHA" \
+              --title "WiFi Tether $VERSION" \
+              --notes-file notes.md \
+              --latest
+          fi
 
       - name: Keep the build log
         if: always()
