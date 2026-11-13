@@ -5,7 +5,9 @@ name: Add old releases
 #  - the .deb comes from the old-debs/ folder if it's there (the real file you
 #    installed), otherwise it's rebuilt from the last commit of that version in
 #    the repository's history (found through the VERSION file);
-#  - the release's "Source code" points at that commit when it can be found.
+#  - that commit's source is attached as WiFiTether-<version>-source.zip.
+#    (Releases are tagged on the current commit: GitHub doesn't let a workflow
+#    tag old commits whose workflow files differ from today's.)
 # Versions that already have a release are skipped. At the end the current
 # version's release is rebuilt so it stays the newest and is marked latest.
 # Afterwards you can delete the old-debs/ folder.
@@ -39,7 +41,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -u
+          set +e   # one version failing shouldn't stop the others
           CHANGELOG="$PWD/CHANGELOG.md"
           CURRENT="$(tr -d '[:space:]' < VERSION)"
 
@@ -99,16 +101,23 @@ jobs:
               echo "== $v: nothing to publish, skipping"; continue
             fi
             notes "$v"
-            if [ -z "$c" ]; then
-              c="$GITHUB_SHA"
-              printf "\n_This version's source code isn't in the repository's history, so the Source code downloads below are from a later version._\n" >> "$RUNNER_TEMP/notes.md"
+            files=("$deb")
+            if [ -n "$c" ]; then
+              src="$RUNNER_TEMP/WiFiTether-$v-source.zip"
+              git archive --format=zip --prefix="WiFiTether-$v/" -o "$src" "$c" && files+=("$src")
+              printf "\nThis version's source code: **WiFiTether-$v-source.zip** below. (GitHub's own *Source code* downloads are the latest code.)\n" >> "$RUNNER_TEMP/notes.md"
+            else
+              printf "\n_This version's source code isn't in the repository's history._\n" >> "$RUNNER_TEMP/notes.md"
             fi
             extra=()
             [ "$v" = "0.5.0" ] && extra+=(--prerelease)
-            gh release create "v$v" "$deb" \
-              --target "$c" --title "WiFi Tether $v" \
-              --notes-file "$RUNNER_TEMP/notes.md" --latest=false "${extra[@]}"
-            built+=("$v")
+            if gh release create "v$v" "${files[@]}" \
+                 --target "$GITHUB_SHA" --title "WiFi Tether $v" \
+                 --notes-file "$RUNNER_TEMP/notes.md" --latest=false "${extra[@]}"; then
+              built+=("$v")
+            else
+              echo "   couldn't create the release for $v"
+            fi
           done
           echo "Released: ${built[*]:-none}"
 
