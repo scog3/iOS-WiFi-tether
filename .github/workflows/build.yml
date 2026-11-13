@@ -9,6 +9,12 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -19,7 +25,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang lld dpkg git curl
+          sudo apt-get install -y -qq clang lld dpkg dpkg-dev git curl
           if ! sudo apt-get install -y -qq ldid; then
             sudo curl -fsSL -o /usr/local/bin/ldid \
               https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64
@@ -66,9 +72,29 @@ jobs:
               --latest
           fi
 
+      - name: Make the Sileo repo
+        run: bash make-repo.sh build/*.deb
+
+      - name: Upload the repo for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: repo
+
       - name: Keep the build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: build.log
+
+  # Publishes the Sileo repo at https://<user>.github.io/<repository>/
+  # Needs Settings -> Pages -> Source: GitHub Actions (once).
+  repo:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
