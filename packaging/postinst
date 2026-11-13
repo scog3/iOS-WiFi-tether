@@ -4,8 +4,6 @@ LD=/var/jb/Library/LaunchDaemons
 
 mkdir -p /var/mobile/Library/WiFiTether
 chown 501:501 /var/mobile/Library/WiFiTether
-# 0.5.0 replaced the single switch ("enabled") with two, both off by default.
-rm -f /var/mobile/Library/WiFiTether/enabled
 
 uicache -p /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
 

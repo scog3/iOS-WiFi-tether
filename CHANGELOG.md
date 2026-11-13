@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2
+
+- **Back to 0.4.1.** 0.5.0's two switches were withdrawn: they made connecting slower
+  and unreliable. This is 0.4.1 with one change: the *Personal Hotspot settings* button
+  is gone.
+- If you're coming from 0.5.0, the switch starts **on** after installing (0.5.0 removed
+  the setting 0.4.1 used). Switch it off once if you don't want that.
+
 ## 0.5.0
 
 - **Two switches.** *Internet sharing* (top) is WiFi Tether's own part: routing, the

@@ -6,5 +6,7 @@
     <true/>
     <key>com.apple.private.security.no-sandbox</key>
     <true/>
+    <key>com.apple.springboard.opensensitiveurl</key>
+    <true/>
 </dict>
 </plist>
