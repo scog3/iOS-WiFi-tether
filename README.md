@@ -36,28 +36,34 @@ It's a free alternative to paid tweaks such as Tethera and TetherMe.
 ## Use
 
 1. Connect the iPhone to **Wi-Fi**.
-2. Open **WiFi Tether** and turn the switch on. It turns Personal Hotspot on for you
-   and keeps Wi-Fi connected.
+2. Open **WiFi Tether** and turn on **Internet sharing**. It turns Personal Hotspot on
+   for you and keeps Wi-Fi connected.
 3. Plug the iPhone into the computer.
 
 That's it: the computer gets an address, gateway and DNS automatically and is online.
-Leave the switch on and it stays ready, including after re-jailbreaking. Switch it off
+Leave it on and it stays ready, including after re-jailbreaking. Switch both off
 to turn Personal Hotspot off; the background services then sleep and use no battery.
 
 | Status in the app | Meaning |
 | --- | --- |
-| 🟢 Sharing Wi-Fi over USB | Working |
-| 🔵 Ready: plug in the USB cable | Personal Hotspot is on; plug in |
+| 🟢 Sharing internet (through VPN) | Working |
+| 🔵 Local network only | Personal Hotspot on, Internet sharing off |
+| 🔵 Plug in the USB cable | Personal Hotspot is on; plug in |
 | 🔵 Waiting for the computer | Plugged in, the computer is setting up the connection; retried automatically |
-| 🟠 Airplane mode is on | Personal Hotspot can't run in airplane mode; turn it off |
 | 🟠 Starting Personal Hotspot | Turning the hotspot on; see the message underneath if it stays |
 | 🟠 Waiting for Wi-Fi | Connect the iPhone to a Wi-Fi network |
+| 🟠 Airplane mode is on | Personal Hotspot can't run in airplane mode; turn it off |
 | 🔴 Couldn't set up sharing | See the message underneath, and the log below |
 | 🔴 Background service isn't running | Re-jailbreak or reinstall the package |
+| ⚪ Off | Both switches off |
 
 The **VPN** row shows *Not connected*, *Shared via utunN* (the computer's traffic goes
 through the iPhone's VPN), or *not shared yet* (the VPN was just connected; give it a
 couple of seconds).
+
+**Personal Hotspot** on its own (Internet sharing off) runs Share's local network as
+it is: the computer can reach the iPhone at `172.20.10.1` (for SSH or file transfer),
+but gets no internet through it.
 
 ## Sharing the iPhone's VPN
 
@@ -138,7 +144,7 @@ address but has no route to the internet. WiFi Tether's background service
    (dropped because the route changed) with a TCP reset, so the computer reconnects at
    once instead of retrying for about a minute.
 
-   While the switch is off, `wifitetherd` and the VPN helper wait for the notification
+   While both switches are off, `wifitetherd` and the VPN helper wait for the notification
    `com.wifitether.changed` instead of checking every second.
 
 Everything is removed again when you switch sharing off or uninstall.

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0
+
+- **Two switches.** *Internet sharing* (top) is WiFi Tether's own part: routing, the
+  automatic gateway, VPN sharing and fast reconnects. *Personal Hotspot* runs the
+  hotspot on its own, Share's local network unchanged: no internet, no gateway. Turning
+  Internet sharing on turns Personal Hotspot on too; turning Personal Hotspot off turns
+  Internet sharing off.
+- Both are **off by default**, including after updating. With both off, Personal Hotspot
+  is turned off and the background services sleep.
+- New layout that fits an iPhone 6s screen: a large status card at the top, then the two
+  switches, then Wi-Fi, USB, VPN and DNS. New *Local network only* status.
+- Removed the Personal Hotspot settings link.
+
 ## 0.4.1
 
 - **Connections switch over instantly** when the VPN connects, disconnects or changes

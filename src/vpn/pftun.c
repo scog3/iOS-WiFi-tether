@@ -76,7 +76,7 @@
 #ifndef VPNID_HELPER
 #define VPNID_HELPER "/var/jb/usr/libexec/wifitether-vpnid"   /* WiFi Tether: install path */
 #endif
-#define WT_ENABLED "/var/mobile/Library/WiFiTether/enabled"   /* WiFi Tether: app switch */
+#define WT_ENABLED "/var/mobile/Library/WiFiTether/sharing"   /* WiFi Tether: "Internet sharing" switch, "1" = on */
 #define WT_VPNIF "/var/mobile/Library/WiFiTether/vpn-if"     /* WiFi Tether: VPN interface, from wifitetherd */
 static int fd;
 static char hs_if[IFNAMSIZ] = "bridge100";   /* Personal Hotspot bridge */
@@ -430,15 +430,15 @@ static int needfrag(int s, const struct ip *ip) {
 	return sendto(s, pkt, n, 0, (struct sockaddr *)&to, sizeof to) < 0 ? -1 : 0;
 }
 
-/* WiFi Tether: share only while the WiFi Tether switch is on (file missing = on)
+/* WiFi Tether: share only while the "Internet sharing" switch is on (file missing = off)
  * and wifitetherd has linked our anchor into the ruleset (the anchor exists).
  * Until then wait quietly instead of failing every second. */
 static int switch_on(void) {
 	FILE *f = fopen(WT_ENABLED, "r");
-	if (!f) return 1;
+	if (!f) return 0;   /* off by default */
 	int c = fgetc(f);
 	fclose(f);
-	return c != '0';
+	return c == '1';
 }
 
 static int allowed(void) {

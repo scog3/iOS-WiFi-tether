@@ -32,7 +32,6 @@
 #include "pfnat.h"
 
 #define WT_DIR      "/var/mobile/Library/WiFiTether"
-#define WT_ENABLED  WT_DIR "/enabled"
 #define WT_STATUS   WT_DIR "/status.plist"
 #define WT_NOTIFY   "com.wifitether.changed"
 #define MOBILE_UID  501
@@ -59,15 +58,34 @@ static void ensureDir(void)
     chown(WT_DIR, MOBILE_UID, MOBILE_UID);
 }
 
-static int isEnabled(void)
+/* The app's two switches, one file each ("1" = on; missing = off):
+ *   sharing  - Internet sharing: routing, gateway, VPN (needs the hotspot)
+ *   hotspot  - Personal Hotspot on its own: Share's local network, unchanged */
+#define WT_SHARING WT_DIR "/sharing"
+#define WT_HOTSPOT WT_DIR "/hotspot"
+
+static int fileOn(const char *path)
 {
-    FILE *f = fopen(WT_ENABLED, "r");
+    FILE *f = fopen(path, "r");
     int c;
     if (!f)
-        return 1; /* on by default */
+        return 0;
     c = fgetc(f);
     fclose(f);
-    return c != '0';
+    return c == '1';
+}
+
+static int sharingWanted(void)
+{
+    return fileOn(WT_SHARING);
+}
+
+/* Hotspot wanted: either switch on. Everything about running the hotspot
+ * (turning it on, Wi-Fi, airplane mode, the computer connecting) follows this;
+ * routing and the gateway only follow sharingWanted(). Both off: sleep. */
+static int isEnabled(void)
+{
+    return sharingWanted() || fileOn(WT_HOTSPOT);
 }
 
 /* wantBridge = 0: Wi-Fi (en0). wantBridge = 1: hotspot bridge (bridge100 etc). */
@@ -855,6 +873,7 @@ static void reconcile(void)
         NSMutableDictionary *st = [NSMutableDictionary dictionary];
         NSString *state, *detail = @"";
         int en = isEnabled();
+        int sh = sharingWanted();
         WTIf up = findIf(0), lan = findIf(1);
 
         trimLog(WT_DIR "/daemon.log");
@@ -916,6 +935,7 @@ static void reconcile(void)
             lan = findIf(1);
 
         st[@"enabled"] = @(en);
+        st[@"sharing"] = @(sh);
         st[@"wifi"] = up.ok ? ipStr(up.ip) : @"";
         st[@"hotspot"] = lan.ok ? [NSString stringWithFormat:@"%@ on %s", ipStr(lan.ip), lan.name] : @"";
 
@@ -923,20 +943,22 @@ static void reconcile(void)
          * that connects while Wi-Fi or the hotspot is still coming up still
          * gets them. */
         int gwOk = 0;
-        if (en)
+        if (sh)
             gwOk = dhcpEnsure();
         else
             dhcpRestore();
         st[@"gateway"] = @(gwOk);
 
-        if (!en || !up.ok || !lan.ok) {
+        if (!sh || !up.ok || !lan.ok) {
             teardown();
             writeVpnIf("");
             if (!en)
                 state = @"off";
             else if (air == 1)
                 state = @"airplane";
-            else if (!up.ok)
+            else if (!sh && lan.ok)
+                state = @"local";       /* hotspot only: Share's local network */
+            else if (sh && !up.ok)
                 state = @"nowifi";
             else if (hotspotState() == MIS_ON || time(NULL) < g_usbRestartUntil) {
                 NSString *wait = usbWait();
@@ -1086,7 +1108,7 @@ static void watchBootpdDir(void)
                                         DISPATCH_VNODE_WRITE | DISPATCH_VNODE_EXTEND,
                                         dispatch_get_main_queue());
     dispatch_source_set_event_handler(g_dirWatch, ^{
-        if (isEnabled())
+        if (sharingWanted())
             dhcpEnsure();
     });
     dispatch_source_set_cancel_handler(g_dirWatch, ^{ close(fd); });
