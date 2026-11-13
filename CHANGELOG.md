@@ -2,7 +2,7 @@
 
 ## 0.4.2
 
-- Removed the **Personal Hotspot Settings** button as unnecessary.
+- Removed the *Personal Hotspot Settings* button as unnecessary.
 
 ## 0.4.1
 
