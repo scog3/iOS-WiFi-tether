@@ -2,24 +2,7 @@
 
 ## 0.4.2
 
-- **Back to 0.4.1.** 0.5.0's two switches were withdrawn: they made connecting slower
-  and unreliable. This is 0.4.1 with one change: the *Personal Hotspot settings* button
-  is gone.
-- If you're coming from 0.5.0, the switch starts **on** after installing (0.5.0 removed
-  the setting 0.4.1 used). Switch it off once if you don't want that.
-
-## 0.5.0
-
-- **Two switches.** *Internet sharing* (top) is WiFi Tether's own part: routing, the
-  automatic gateway, VPN sharing and fast reconnects. *Personal Hotspot* runs the
-  hotspot on its own, Share's local network unchanged: no internet, no gateway. Turning
-  Internet sharing on turns Personal Hotspot on too; turning Personal Hotspot off turns
-  Internet sharing off.
-- Both are **off by default**, including after updating. With both off, Personal Hotspot
-  is turned off and the background services sleep.
-- New layout that fits an iPhone 6s screen: a large status card at the top, then the two
-  switches, then Wi-Fi, USB, VPN and DNS. New *Local network only* status.
-- Removed the Personal Hotspot settings link.
+- Removed the *Personal Hotspot settings* button.
 
 ## 0.4.1
 
