@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wifitether.vpn</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/var/jb/usr/libexec/wifitether-vpn</string>
+        <string>run</string>
+        <!-- Optional overrides from pftun, each flag and value as separate strings:
+             -b bridge-if   -i vpn-if   -u vpn-config-uuid   -n extension-process-name   -m limit-mb -->
+    </array>
+    <key>UserName</key>
+    <string>root</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>StandardOutPath</key>
+    <string>/var/mobile/Library/WiFiTether/vpn.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/mobile/Library/WiFiTether/vpn.log</string>
+</dict>
+</plist>

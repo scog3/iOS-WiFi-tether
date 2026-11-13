@@ -23,6 +23,7 @@
     UILabel  *_wifi;
     UILabel  *_usb;
     UILabel  *_dns;
+    UILabel  *_vpn;
     NSTimer  *_timer;
 }
 
@@ -98,6 +99,7 @@
     _wifi = [self labelWithSize:15 weight:UIFontWeightMedium color:UIColor.labelColor];
     _usb = [self labelWithSize:15 weight:UIFontWeightMedium color:UIColor.labelColor];
     _dns = [self labelWithSize:15 weight:UIFontWeightMedium color:UIColor.labelColor];
+    _vpn = [self labelWithSize:15 weight:UIFontWeightMedium color:UIColor.labelColor];
 
     UIButton *hotspot = [UIButton buttonWithType:UIButtonTypeSystem];
     [hotspot setTitle:@"Open Personal Hotspot settings" forState:UIControlStateNormal];
@@ -109,7 +111,8 @@
     help.text = @"1. Connect this iPhone to Wi-Fi.\n"
                 @"2. Turn on Personal Hotspot (needs the Share tweak).\n"
                 @"3. Plug the iPhone into the computer with a USB cable.\n\n"
-                @"The computer gets internet through this iPhone's Wi-Fi. Leave this switch on and it works automatically whenever all three are true.";
+                @"The computer gets internet through this iPhone's Wi-Fi. Leave this switch on and it works automatically whenever all three are true.\n\n"
+                @"If a VPN is connected on this iPhone, the computer's traffic goes through the VPN too.";
 
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
         title, subtitle,
@@ -117,7 +120,8 @@
         [self card:@[stateRow, _detail,
                      [self row:@"Wi-Fi" value:_wifi],
                      [self row:@"Hotspot / USB" value:_usb],
-                     [self row:@"DNS" value:_dns]]],
+                     [self row:@"DNS" value:_dns],
+                     [self row:@"VPN" value:_vpn]]],
         [self card:@[hotspot]],
         help,
     ]];
@@ -187,6 +191,13 @@
     _wifi.text = wifi.length ? wifi : @"Not connected";
     _usb.text = usb.length ? usb : @"Off";
     _dns.text = dns.length ? dns : @"–";
+    NSString *vpn = st[@"vpn"];
+    if (!vpn.length)
+        _vpn.text = @"Not connected";
+    else if ([st[@"vpnShared"] boolValue])
+        _vpn.text = [NSString stringWithFormat:@"Shared via %@", vpn];
+    else
+        _vpn.text = [NSString stringWithFormat:@"%@, not shared yet", vpn];
     _detail.text = @"";
     _detail.hidden = YES;
 

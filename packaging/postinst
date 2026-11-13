@@ -1,13 +1,21 @@
 #!/var/jb/bin/sh
 PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:$PATH
-PLIST=/var/jb/Library/LaunchDaemons/com.wifitether.daemon.plist
+LD=/var/jb/Library/LaunchDaemons
 
 mkdir -p /var/mobile/Library/WiFiTether
 chown 501:501 /var/mobile/Library/WiFiTether
 
 uicache -p /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
 
-launchctl unload "$PLIST" >/dev/null 2>&1 || true
-launchctl load -w "$PLIST" || true
+# The upstream VPN tool (com.mali.pftun) does the same job; two copies would fight.
+if [ -f $LD/com.mali.pftun.plist ]; then
+    echo "Note: com.mali.pftun (ios-hotspot-vpn-keepalive) is installed. WiFi Tether includes it; stopping the separate copy."
+    launchctl unload -w $LD/com.mali.pftun.plist >/dev/null 2>&1 || true
+fi
+
+for n in com.wifitether.daemon com.wifitether.vpn; do
+    launchctl unload "$LD/$n.plist" >/dev/null 2>&1 || true
+    launchctl load -w "$LD/$n.plist" || true
+done
 
 exit 0

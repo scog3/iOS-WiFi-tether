@@ -101,8 +101,9 @@ static void set_addrmask(struct pf_addr_wrap *w, in_addr_t addr, in_addr_t mask)
     w->v.a.mask.addr32[0] = mask;
 }
 
-/* Count the rules in one ruleset, and how many of them carry our label. */
-static int ruleset_info(const char *anchor, int action, u_int32_t *total, u_int32_t *ours)
+/* Count the rules in one ruleset, and how many of them carry `label`. */
+static int ruleset_info_label(const char *anchor, int action, const char *label,
+                              u_int32_t *total, u_int32_t *ours)
 {
     struct pfioc_rule pr;
     u_int32_t n, ticket, mine = 0, i;
@@ -123,12 +124,122 @@ static int ruleset_info(const char *anchor, int action, u_int32_t *total, u_int3
         strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
         if (ioctl(g_fd, DIOCGETRULE, &pr) < 0)
             return -1;
-        if (strncmp(pr.rule.label, WT_LABEL, sizeof(pr.rule.label)) == 0)
+        if (strncmp(pr.rule.label, label, sizeof(pr.rule.label)) == 0)
             mine++;
     }
     if (total) *total = n;
     if (ours)  *ours = mine;
     return 0;
+}
+
+static int ruleset_info(const char *anchor, int action, u_int32_t *total, u_int32_t *ours)
+{
+    return ruleset_info_label(anchor, action, WT_LABEL, total, ours);
+}
+
+/* ── VPN sharing hook ─────────────────────────────────────────────
+ * The VPN helper (wifitether-vpn, based on pftun) keeps its rules in the
+ * anchor WT_VPN_ANCHOR. Nothing evaluates an anchor unless the active ruleset
+ * points at it, and with Share's local-only hotspot iOS loads no anchors of its
+ * own. So while sharing is active we link it in twice:
+ *   nat-anchor "/wifitether.vpn"   (part of our NAT transaction, see pfn_apply)
+ *   anchor "/wifitether.vpn"       (one rule at the head of the main filter
+ *                                   ruleset, added with DIOCCHANGERULE so iOS's
+ *                                   own filter rules are never touched)
+ * Both carry our label so they can be found and removed again. */
+
+static int filter_hook_index(u_int32_t *ticket)
+{
+    struct pfioc_rule pr;
+    u_int32_t n, i;
+
+    memset(&pr, 0, sizeof(pr));
+    pr.rule.action = PF_PASS;
+    if (ioctl(g_fd, DIOCGETRULES, &pr) < 0)
+        return -2;
+    n = pr.nr;
+    *ticket = pr.ticket;
+    for (i = 0; i < n; i++) {
+        struct pfioc_rule r;
+        memset(&r, 0, sizeof(r));
+        r.rule.action = PF_PASS;
+        r.nr = i;
+        r.ticket = *ticket;
+        if (ioctl(g_fd, DIOCGETRULE, &r) < 0)
+            continue;
+        if (strncmp(r.rule.label, WT_LABEL, sizeof(r.rule.label)) == 0)
+            return (int)i;
+    }
+    return -1;
+}
+
+int pfn_filter_hook_present(void)
+{
+    u_int32_t t;
+    return g_fd >= 0 && filter_hook_index(&t) >= 0;
+}
+
+int pfn_filter_hook_add(char *err, size_t errlen)
+{
+    struct pfioc_pooladdr pp;
+    struct pfioc_rule pr;
+    u_int32_t ticket;
+
+    if (filter_hook_index(&ticket) >= 0)
+        return 0;
+
+    memset(&pp, 0, sizeof(pp));
+    if (ioctl(g_fd, DIOCBEGINADDRS, &pp) < 0) {
+        ERR("VPN hook: DIOCBEGINADDRS failed: %s", strerror(errno));
+        return -1;
+    }
+    memset(&pr, 0, sizeof(pr));
+    if (filter_hook_index(&ticket) == -2) {
+        ERR("VPN hook: can't read filter rules: %s", strerror(errno));
+        return -1;
+    }
+    pr.action = PF_CHANGE_ADD_HEAD;
+    pr.ticket = ticket;
+    pr.pool_ticket = pp.ticket;
+    strlcpy(pr.anchor_call, "/" WT_VPN_ANCHOR, sizeof(pr.anchor_call));
+    pr.rule.action = PF_PASS;
+    pr.rule.af = AF_INET;
+    strlcpy(pr.rule.label, WT_LABEL, sizeof(pr.rule.label));
+    if (ioctl(g_fd, DIOCCHANGERULE, &pr) < 0) {
+        ERR("VPN hook: couldn't add the filter anchor: %s", strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+void pfn_filter_hook_remove(void)
+{
+    int i, guard;
+    u_int32_t ticket;
+
+    if (g_fd < 0)
+        return;
+    for (guard = 0; guard < 8 && (i = filter_hook_index(&ticket)) >= 0; guard++) {
+        struct pfioc_rule pr;
+        memset(&pr, 0, sizeof(pr));
+        pr.action = PF_CHANGE_REMOVE;
+        pr.nr = (u_int32_t)i;
+        pr.ticket = ticket;
+        pr.rule.action = PF_PASS;
+        if (ioctl(g_fd, DIOCCHANGERULE, &pr) < 0)
+            break;
+    }
+}
+
+/* Has the VPN helper loaded its NAT rule (label "tunshare")? */
+int pfn_vpn_shared(void)
+{
+    u_int32_t t = 0, mine = 0;
+    if (g_fd < 0)
+        return 0;
+    if (ruleset_info_label(WT_VPN_ANCHOR, PF_NAT, "tunshare", &t, &mine) < 0)
+        return 0;
+    return mine > 0;
 }
 
 /*
@@ -194,6 +305,34 @@ static int add_rule(const char *anchor, u_int32_t ticket, struct pf_rule *r,
     return 0;
 }
 
+/* An anchor rule (nat-anchor / rdr-anchor) inside a transaction. Anchor
+ * rules need a pool ticket but no pool address. */
+static int add_anchor_rule(const char *anchor, u_int32_t ticket, int action,
+                           const char *call, char *err, size_t errlen)
+{
+    struct pfioc_pooladdr pp;
+    struct pfioc_rule pr;
+
+    memset(&pp, 0, sizeof(pp));
+    if (ioctl(g_fd, DIOCBEGINADDRS, &pp) < 0) {
+        ERR("VPN anchor: DIOCBEGINADDRS failed: %s", strerror(errno));
+        return -1;
+    }
+    memset(&pr, 0, sizeof(pr));
+    pr.ticket = ticket;
+    pr.pool_ticket = pp.ticket;
+    strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+    strlcpy(pr.anchor_call, call, sizeof(pr.anchor_call));
+    pr.rule.action = action;
+    pr.rule.af = AF_INET;
+    strlcpy(pr.rule.label, WT_LABEL, sizeof(pr.rule.label));
+    if (ioctl(g_fd, DIOCADDRULE, &pr) < 0) {
+        ERR("VPN anchor: DIOCADDRULE failed: %s", strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
 static void init_trans(struct pfioc_trans *t, struct pfioc_trans_e *te, const char *anchor)
 {
     memset(te, 0, sizeof(*te) * 2);
@@ -221,6 +360,10 @@ int pfn_apply(const struct pfn_cfg *c, char *err, size_t errlen)
         ERR("Couldn't start a packet filter transaction: %s", strerror(errno));
         return -1;
     }
+
+    /* nat-anchor "/wifitether.vpn": the VPN helper's NAT rule lives there */
+    if (add_anchor_rule(c->anchor, te[0].ticket, PF_NAT, "/" WT_VPN_ANCHOR, err, errlen) < 0)
+        goto fail;
 
     /* nat on <up_if> inet from <lan subnet> to any -> <up_ip> */
     memset(&r, 0, sizeof(r));
@@ -258,6 +401,8 @@ int pfn_apply(const struct pfn_cfg *c, char *err, size_t errlen)
         ERR("Couldn't commit packet filter rules: %s", strerror(errno));
         goto fail;
     }
+    /* The Wi-Fi rules are in. A failing VPN hook only affects VPN sharing. */
+    pfn_filter_hook_add(err, errlen);
     return 0;
 
 fail:
@@ -272,6 +417,7 @@ int pfn_clear(const char *anchor, char *err, size_t errlen)
 
     if (g_fd < 0)
         return 0;
+    pfn_filter_hook_remove();
     init_trans(&t, te, anchor);
     if (ioctl(g_fd, DIOCXBEGIN, &t) < 0 || ioctl(g_fd, DIOCXCOMMIT, &t) < 0) {
         ERR("Couldn't remove packet filter rules: %s", strerror(errno));

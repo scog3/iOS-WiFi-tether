@@ -6,6 +6,7 @@
 
 #define WT_LABEL "wifitether"
 #define WT_FALLBACK_ANCHOR "com.apple/990.WiFiTether"
+#define WT_VPN_ANCHOR "wifitether.vpn" /* VPN helper rules (see src/vpn) */
 
 struct pfn_cfg {
     const char *anchor;   /* "" = main ruleset */
@@ -24,5 +25,9 @@ int  pfn_pick_anchor(char *anchor, size_t anchorlen, char *err, size_t errlen);
 int  pfn_apply(const struct pfn_cfg *cfg, char *err, size_t errlen);
 int  pfn_clear(const char *anchor, char *err, size_t errlen);
 int  pfn_present(const char *anchor);
+int  pfn_filter_hook_present(void);
+int  pfn_filter_hook_add(char *err, size_t errlen);
+void pfn_filter_hook_remove(void);
+int  pfn_vpn_shared(void);
 
 #endif

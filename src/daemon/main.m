@@ -99,6 +99,40 @@ static WTIf findIf(int wantBridge)
     return r;
 }
 
+/* A connected VPN: a utun with a private IPv4 address. Same test as the VPN
+ * helper (src/vpn/pftun.c find_tun): skip link-local 169.254/16 and 198.18/15,
+ * which the helper uses for its own utun. */
+static WTIf findVPN(void)
+{
+    WTIf r;
+    struct ifaddrs *ifs = NULL, *i;
+
+    memset(&r, 0, sizeof(r));
+    if (getifaddrs(&ifs) != 0)
+        return r;
+    for (i = ifs; i; i = i->ifa_next) {
+        uint32_t h;
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || strncmp(i->ifa_name, "utun", 4) != 0)
+            continue;
+        h = ntohl(((struct sockaddr_in *)i->ifa_addr)->sin_addr.s_addr);
+        if ((h >> 16) == 0xA9FE || (h >> 17) == (0xC6120000u >> 17))
+            continue;
+        strlcpy(r.name, i->ifa_name, sizeof(r.name));
+        r.ip = htonl(h);
+        r.ok = 1;
+    }
+    freeifaddrs(ifs);
+    return r;
+}
+
+/* Keep the logs small: launchd appends to them, so truncating is safe. */
+static void trimLog(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_size > 1024 * 1024)
+        truncate(path, 0);
+}
+
 /* The DNS server iOS is using on Wi-Fi; falls back to 1.1.1.1. */
 static in_addr_t findDNS(void)
 {
@@ -339,6 +373,9 @@ static void reconcile(void)
         int en = isEnabled();
         WTIf up = findIf(0), lan = findIf(1);
 
+        trimLog(WT_DIR "/daemon.log");
+        trimLog(WT_DIR "/vpn.log");
+
         st[@"enabled"] = @(en);
         st[@"wifi"] = up.ok ? ipStr(up.ip) : @"";
         st[@"hotspot"] = lan.ok ? [NSString stringWithFormat:@"%@ on %s", ipStr(lan.ip), lan.name] : @"";
@@ -360,8 +397,16 @@ static void reconcile(void)
             in_addr_t dns = findDNS();
             char key[160], err[256] = "";
             int ok = 1, need;
+            WTIf vpn = findVPN();
+
+            /* With a VPN connected, client traffic goes through it (src/vpn).
+             * A DNS server on the Wi-Fi network itself can't be reached through
+             * the VPN, so use a public one instead; it travels through the VPN. */
+            if (vpn.ok && (dns & up.mask) == (up.ip & up.mask))
+                dns = inet_addr("1.1.1.1");
 
             st[@"dns"] = ipStr(dns);
+            st[@"vpn"] = vpn.ok ? [NSString stringWithFormat:@"%s (%@)", vpn.name, ipStr(vpn.ip)] : @"";
             snprintf(key, sizeof(key), "%s|%08x|%s|%08x|%08x|%08x",
                      up.name, up.ip, lan.name, lan.ip, lan.mask, dns);
 
@@ -402,11 +447,26 @@ static void reconcile(void)
                 } while (0);
 
                 if (!ok) {
-                    NSLog(@"wifitetherd: %s", err);
+                    static char lastErr[256];
+                    if (strcmp(err, lastErr) != 0) {
+                        NSLog(@"wifitetherd: %s", err);
+                        strlcpy(lastErr, err, sizeof(lastErr));
+                    }
                     if (!g_applied)
                         restoreFwd();
                 }
             }
+            /* VPN sharing hook: re-add it if iOS dropped it; report a failure once. */
+            if (ok && g_applied && !pfn_filter_hook_present()) {
+                static char lastHookErr[256];
+                char herr[256] = "";
+                if (pfn_filter_hook_add(herr, sizeof(herr)) != 0 && strcmp(herr, lastHookErr) != 0) {
+                    NSLog(@"wifitetherd: %s", herr);
+                    strlcpy(lastHookErr, herr, sizeof(lastHookErr));
+                }
+            }
+            st[@"vpnShared"] = @(vpn.ok && pfn_vpn_shared());
+
             state = ok ? @"active" : @"error";
             if (!ok) {
                 detail = [NSString stringWithUTF8String:err];
