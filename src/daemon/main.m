@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <fcntl.h>
+#include <net/route.h>
+#include <net/if_dl.h>
 #include <notify.h>
 #include <dlfcn.h>
 #include <signal.h>
@@ -99,47 +101,13 @@ static WTIf findIf(int wantBridge)
     return r;
 }
 
-/* A connected VPN: a utun with a private IPv4 address. Same test as the VPN
- * helper (src/vpn/pftun.c find_tun): skip link-local 169.254/16 and 198.18/15,
- * which the helper uses for its own utun. */
-static WTIf findVPN(void)
-{
-    WTIf r;
-    struct ifaddrs *ifs = NULL, *i;
-
-    memset(&r, 0, sizeof(r));
-    if (getifaddrs(&ifs) != 0)
-        return r;
-    for (i = ifs; i; i = i->ifa_next) {
-        uint32_t h;
-        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || strncmp(i->ifa_name, "utun", 4) != 0)
-            continue;
-        h = ntohl(((struct sockaddr_in *)i->ifa_addr)->sin_addr.s_addr);
-        if ((h >> 16) == 0xA9FE || (h >> 17) == (0xC6120000u >> 17))
-            continue;
-        strlcpy(r.name, i->ifa_name, sizeof(r.name));
-        r.ip = htonl(h);
-        r.ok = 1;
-    }
-    freeifaddrs(ifs);
-    return r;
-}
-
-/* Keep the logs small: launchd appends to them, so truncating is safe. */
-static void trimLog(const char *path)
-{
-    struct stat st;
-    if (stat(path, &st) == 0 && st.st_size > 1024 * 1024)
-        truncate(path, 0);
-}
-
-/* The DNS server iOS is using on Wi-Fi; falls back to 1.1.1.1. */
-static in_addr_t findDNS(void)
+/* Read a value from iOS's network state (SCDynamicStore, private on iOS). */
+static NSDictionary *scValue(NSString *key)
 {
     static void *h;
     static void *(*scCreate)(CFAllocatorRef, CFStringRef, void *, void *);
     static CFPropertyListRef (*scCopyValue)(void *, CFStringRef);
-    in_addr_t out = 0;
+    NSDictionary *d = nil;
 
     if (!h) {
         h = dlopen("/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration", RTLD_LAZY);
@@ -151,23 +119,175 @@ static in_addr_t findDNS(void)
     if (scCreate && scCopyValue) {
         void *store = scCreate(NULL, CFSTR("wifitetherd"), NULL, NULL);
         if (store) {
-            CFPropertyListRef v = scCopyValue(store, CFSTR("State:/Network/Global/DNS"));
-            NSDictionary *d = (__bridge_transfer NSDictionary *)v;
-            if ([d isKindOfClass:[NSDictionary class]]) {
-                for (NSString *s in d[@"ServerAddresses"]) {
-                    struct in_addr a;
-                    uint32_t hv;
-                    if (![s isKindOfClass:[NSString class]] || inet_pton(AF_INET, s.UTF8String, &a) != 1)
-                        continue;
-                    hv = ntohl(a.s_addr);
-                    if ((hv >> 24) == 127 || (hv >> 16) == 0xA9FE || hv == 0)
-                        continue;
-                    out = a.s_addr;
-                    break;
-                }
-            }
+            id v = (__bridge_transfer id)scCopyValue(store, (__bridge CFStringRef)key);
+            if ([v isKindOfClass:[NSDictionary class]])
+                d = v;
             CFRelease((CFTypeRef)store);
         }
+    }
+    return d;
+}
+
+static int ifIPv4(const char *name, in_addr_t *ip)
+{
+    struct ifaddrs *ifs = NULL, *i;
+    int found = 0;
+    if (getifaddrs(&ifs) != 0)
+        return 0;
+    for (i = ifs; i; i = i->ifa_next) {
+        in_addr_t a;
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || strcmp(i->ifa_name, name) != 0)
+            continue;
+        a = ((struct sockaddr_in *)i->ifa_addr)->sin_addr.s_addr;
+        if ((ntohl(a) >> 16) == 0xA9FE)
+            continue;
+        *ip = a;
+        found = 1;
+        break;
+    }
+    freeifaddrs(ifs);
+    return found;
+}
+
+/* Which interface the kernel would send internet traffic out of: a route
+ * lookup (RTM_GET) for a public address. Returns 1 and the name on success. */
+static int routeInterface(char *name, size_t namelen)
+{
+    struct {
+        struct rt_msghdr h;
+        char space[512];
+    } m;
+    struct sockaddr_in *dst;
+    struct sockaddr_dl *ifp;
+    int s, seq = 0x5754, n, found = 0;
+    pid_t pid = getpid();
+    char *cp;
+    int i;
+
+    s = socket(PF_ROUTE, SOCK_RAW, AF_INET);
+    if (s < 0)
+        return 0;
+    memset(&m, 0, sizeof(m));
+    m.h.rtm_version = RTM_VERSION;
+    m.h.rtm_type = RTM_GET;
+    m.h.rtm_addrs = RTA_DST | RTA_IFP;
+    m.h.rtm_seq = seq;
+    dst = (struct sockaddr_in *)m.space;
+    dst->sin_len = sizeof(*dst);
+    dst->sin_family = AF_INET;
+    dst->sin_addr.s_addr = inet_addr("1.1.1.1");
+    ifp = (struct sockaddr_dl *)(m.space + sizeof(*dst));
+    ifp->sdl_len = sizeof(*ifp);
+    ifp->sdl_family = AF_LINK;
+    m.h.rtm_msglen = (u_short)(sizeof(m.h) + sizeof(*dst) + sizeof(*ifp));
+
+    {
+        struct timeval tv = { 1, 0 };
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    }
+    if (write(s, &m, m.h.rtm_msglen) < 0) {
+        close(s);
+        return 0;
+    }
+    do {
+        n = (int)read(s, &m, sizeof(m));
+    } while (n > 0 && (m.h.rtm_seq != seq || m.h.rtm_pid != pid));
+    close(s);
+    if (n <= (int)sizeof(m.h) || m.h.rtm_errno)
+        return 0;
+
+    cp = m.space;
+    for (i = 0; i < RTAX_MAX; i++) {
+        struct sockaddr *sa;
+        if (!(m.h.rtm_addrs & (1 << i)))
+            continue;
+        sa = (struct sockaddr *)cp;
+        if (i == RTAX_IFP && sa->sa_family == AF_LINK) {
+            struct sockaddr_dl *sdl = (struct sockaddr_dl *)sa;
+            if (sdl->sdl_nlen > 0 && (size_t)sdl->sdl_nlen < namelen) {
+                memcpy(name, sdl->sdl_data, sdl->sdl_nlen);
+                name[sdl->sdl_nlen] = 0;
+                found = 1;
+            }
+            break;
+        }
+        cp += sa->sa_len ? ((sa->sa_len + 3) & ~3) : 4;
+        if (cp >= m.space + sizeof(m.space))
+            break;
+    }
+    return found;
+}
+
+static int isLocalIf(const char *name, const WTIf *wifi)
+{
+    return strcmp(name, wifi->name) == 0 || strncmp(name, "en", 2) == 0 ||
+           strncmp(name, "bridge", 6) == 0 || strncmp(name, "pdp_ip", 6) == 0 ||
+           strncmp(name, "lo", 2) == 0;
+}
+
+/* A connected VPN, whatever kind (utun from a VPN app, ipsec from IKEv2, ...):
+ * when a full-tunnel VPN is up, the phone's own internet traffic goes through
+ * it, so find the interface the phone itself uses for the internet. If that's Wi-Fi
+ * (no VPN, or a split-tunnel one), there's nothing to share. */
+static WTIf findVPN(const WTIf *wifi)
+{
+    WTIf r;
+    char name[IFNAMSIZ] = "";
+
+    memset(&r, 0, sizeof(r));
+    /* 1. Ask the kernel where traffic to the internet goes. */
+    if (!routeInterface(name, sizeof(name))) {
+        /* 2. Otherwise ask iOS which interface is primary. */
+        NSDictionary *g = scValue(@"State:/Network/Global/IPv4");
+        NSString *pi = g[@"PrimaryInterface"];
+        if (![pi isKindOfClass:[NSString class]] || !pi.length)
+            return r;
+        strlcpy(name, pi.UTF8String, sizeof(name));
+    }
+    if (isLocalIf(name, wifi))
+        return r;   /* Wi-Fi: no VPN, or a split-tunnel one */
+    strlcpy(r.name, name, sizeof(r.name));
+    r.ok = ifIPv4(r.name, &r.ip);
+    return r;
+}
+
+/* Tell the VPN helper which interface to use ("" = none). Written only on change. */
+static void writeVpnIf(const char *name)
+{
+    static char last[IFNAMSIZ] = "\x01";
+    if (strcmp(last, name) == 0)
+        return;
+    ensureDir();
+    [[NSString stringWithFormat:@"%s\n", name] writeToFile:@WT_DIR "/vpn-if" atomically:YES
+                                                  encoding:NSUTF8StringEncoding error:nil];
+    strlcpy(last, name, sizeof(last));
+    if (name[0])
+        NSLog(@"wifitetherd: VPN interface %s", name);
+}
+
+/* Keep the logs small: launchd appends to them, so truncating is safe. */
+static void trimLog(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_size > 1024 * 1024)
+        truncate(path, 0);
+}
+
+/* The DNS server iOS is using; falls back to 1.1.1.1. */
+static in_addr_t findDNS(void)
+{
+    in_addr_t out = 0;
+    NSDictionary *d = scValue(@"State:/Network/Global/DNS");
+    for (NSString *s in d[@"ServerAddresses"]) {
+        struct in_addr a;
+        uint32_t hv;
+        if (![s isKindOfClass:[NSString class]] || inet_pton(AF_INET, s.UTF8String, &a) != 1)
+            continue;
+        hv = ntohl(a.s_addr);
+        if ((hv >> 24) == 127 || (hv >> 16) == 0xA9FE || hv == 0)
+            continue;
+        out = a.s_addr;
+        break;
     }
     if (!out)
         out = inet_addr("1.1.1.1");
@@ -392,12 +512,14 @@ static void reconcile(void)
 
         if (!en || !up.ok || !lan.ok) {
             teardown();
+            writeVpnIf("");
             state = !en ? @"off" : (!up.ok ? @"nowifi" : @"nohotspot");
         } else {
             in_addr_t dns = findDNS();
             char key[160], err[256] = "";
             int ok = 1, need;
-            WTIf vpn = findVPN();
+            WTIf vpn = findVPN(&up);
+            writeVpnIf(vpn.ok ? vpn.name : "");
 
             /* With a VPN connected, client traffic goes through it (src/vpn).
              * A DNS server on the Wi-Fi network itself can't be reached through

@@ -59,8 +59,9 @@ couple of seconds).
 Connect a VPN on the iPhone and the computer's traffic follows it automatically.
 Disconnect it and traffic goes straight out through Wi-Fi again.
 
-- Works with VPN apps that create a normal packet tunnel with an IPv4 address
-  (WireGuard, sing-box / Hiddify and similar). Only IPv4 goes through the VPN.
+- Works with any full-tunnel VPN that has an IPv4 address: VPN apps (WireGuard,
+  sing-box / Hiddify and similar) and IKEv2 / built-in VPNs. Only IPv4 goes through
+  the VPN. Split-tunnel VPNs aren't shared; traffic goes out through Wi-Fi.
 - With sing-box based apps (Hiddify etc.), set the TUN stack to **mixed**, not
   *gvisor*: gvisor can run out of memory under heavy uploads and iOS stops the VPN.
 - iOS limits VPN apps to 50 MB of memory. WiFi Tether raises that to 128 MB while

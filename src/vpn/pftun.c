@@ -23,7 +23,16 @@
  *  - Paths of the helper and the on/off setting are WiFi Tether's.
  *  - Sharing follows WiFi Tether's on/off switch, and waits until wifitetherd
  *    has linked the anchor in.
- *  - A failed install is logged once, not every second. */
+ *  - A failed install is logged once, not every second.
+ *  - Which interface is the VPN comes from wifitetherd (file WT_VPNIF): the interface iOS
+ *    routes its own traffic through, so any full-tunnel VPN works (utun, ipsec/IKEv2, ...),
+ *    not only a utun with an address outside 198.18/15.
+ *  - Our own utun uses 192.0.2.1 (TEST-NET-1) instead of 198.18.0.1, which some VPN apps use.
+ *  - Packets bigger than the VPN interface's MTU: if Don't Fragment is set, answer the client
+ *    with ICMP "fragmentation needed" (like a router) so it sends smaller packets; otherwise the
+ *    kernel fragments them. (e.g. IKEv2 tunnels have an MTU of 1280.)
+ *  - The search for a VPN extension process runs every 30 s instead of every second when
+ *    none is found (IKEv2 VPNs have none). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,17 +66,21 @@
 #define LABEL "tunshare"
 #define UTUN_CONTROL_NAME "com.apple.net.utun_control"
 #define UTUN_OPT_IFNAME 2
-#define OWN_ADDR "198.18.0.1"   /* our utun; 198.18.0.0/15 is skipped when looking for the VPN */
-#define OWN_PEER "198.18.0.2"
+#define OWN_ADDR "192.0.2.1"    /* WiFi Tether: our utun; TEST-NET-1, which no VPN uses (was 198.18.0.1) */
+#define OWN_PEER "192.0.2.2"
 #ifndef VPNID_HELPER
 #define VPNID_HELPER "/var/jb/usr/libexec/wifitether-vpnid"   /* WiFi Tether: install path */
 #endif
 #define WT_ENABLED "/var/mobile/Library/WiFiTether/enabled"   /* WiFi Tether: app switch */
+#define WT_VPNIF "/var/mobile/Library/WiFiTether/vpn-if"     /* WiFi Tether: VPN interface, from wifitetherd */
 static int fd;
 static char hs_if[IFNAMSIZ] = "bridge100";   /* Personal Hotspot bridge */
 static char hs_net[32] = "";                 /* its IPv4 network address, last seen */
 static int hs_bits;                          /* and prefix length */
+static char hs_addr[32] = "";                /* WiFi Tether: the bridge's own address (ICMP source) */
+static int vpn_mtu = 1500;                   /* WiFi Tether: MTU of the VPN interface */
 static char vpn_if[IFNAMSIZ] = "";           /* -i: use this interface as the VPN instead of detecting it */
+static int vpn_auto_if = 1;                  /* WiFi Tether: vpn_if comes from WT_VPNIF unless -i was given */
 static char vpnid[40] = "";                  /* VPN configuration UUID (-u or helper) */
 static char ne_name[64] = "";                /* VPN extension process name (-n or detected) */
 static int vpn_auto = 1, ne_auto = 1;        /* the two values above are detected, not given on the command line */
@@ -187,6 +200,7 @@ static int hs_detect(void) {
 		uint32_t m = ntohl(((struct sockaddr_in *)p->ifa_netmask)->sin_addr.s_addr);
 		struct in_addr n = { htonl(ntohl(a.s_addr) & m) };
 		inet_ntop(AF_INET, &n, hs_net, sizeof hs_net);
+		inet_ntop(AF_INET, &a, hs_addr, sizeof hs_addr);   /* WiFi Tether */
 		hs_bits = m ? 32 - __builtin_ctz(m) : 0;
 		found = 1;
 	}
@@ -199,12 +213,25 @@ static int hs_detect(void) {
 static int find_tun(char *name, char *addr) {
 	struct ifaddrs *ifa, *p; int found = 0;
 	if (!hs_detect()) return 0;
+	/* WiFi Tether: wifitetherd writes the interface iOS routes through when a VPN is the
+	 * primary connection, or an empty file when there is none. Missing file: upstream's guess. */
+	if (vpn_auto_if) {
+		FILE *f = fopen(WT_VPNIF, "r");
+		if (f) {
+			char b[IFNAMSIZ] = "";
+			if (!fgets(b, sizeof b, f)) b[0] = 0;
+			fclose(f);
+			b[strcspn(b, "\r\n")] = 0;
+			if (!b[0]) { vpn_if[0] = 0; return 0; }
+			strlcpy(vpn_if, b, sizeof vpn_if);
+		} else vpn_if[0] = 0;
+	}
 	if (getifaddrs(&ifa) < 0) return 0;
 	for (p = ifa; p; p = p->ifa_next) {
 		if (!p->ifa_addr || p->ifa_addr->sa_family != AF_INET) continue;
 		if (vpn_if[0] ? strcmp(p->ifa_name, vpn_if) : strncmp(p->ifa_name, "utun", 4)) continue;
 		struct in_addr a = ((struct sockaddr_in *)p->ifa_addr)->sin_addr;
-		if (!vpn_if[0] && ((ntohl(a.s_addr) >> 16) == 0xa9fe || (ntohl(a.s_addr) >> 17) == (0xc6120000u >> 17))) continue;
+		if (!vpn_if[0] && ((ntohl(a.s_addr) >> 16) == 0xa9fe || a.s_addr == inet_addr(OWN_ADDR))) continue;   /* WiFi Tether: skip only our own utun */
 		strlcpy(name, p->ifa_name, IFNAMSIZ); inet_ntop(AF_INET, &a, addr, 32); found = 1;
 	}
 	freeifaddrs(ifa);
@@ -371,6 +398,33 @@ static int vpn_start(const char *id) {
 	return 0;
 }
 
+/* WiFi Tether: tell a client its packet is too big for the VPN (ICMP type 3 code 4 with the
+ * next-hop MTU), as a router would. ip points at the client's packet (network byte order). */
+static int needfrag(int s, const struct ip *ip) {
+	unsigned char pkt[20 + 8 + 60 + 8];
+	size_t hl = (size_t)ip->ip_hl * 4, quote = hl + 8, n = 20 + 8 + quote;
+	struct ip *o = (struct ip *)pkt;
+	unsigned char *ic = pkt + 20;
+	struct sockaddr_in to;
+	uint32_t sum = 0;
+	if (hl < 20 || hl > 60 || !hs_addr[0]) return -1;
+	memset(pkt, 0, sizeof pkt);
+	o->ip_v = 4; o->ip_hl = 5; o->ip_ttl = 64; o->ip_p = IPPROTO_ICMP;
+	o->ip_len = (u_short)n;                        /* raw IP_HDRINCL: host order */
+	inet_pton(AF_INET, hs_addr, &o->ip_src);
+	o->ip_dst = ip->ip_src;
+	ic[0] = 3; ic[1] = 4;                          /* destination unreachable, fragmentation needed */
+	ic[6] = (unsigned char)(vpn_mtu >> 8); ic[7] = (unsigned char)vpn_mtu;
+	memcpy(ic + 8, ip, quote);
+	for (size_t i = 0; i < 8 + quote; i += 2) sum += (ic[i] << 8) | (i + 1 < 8 + quote ? ic[i + 1] : 0);
+	while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
+	sum = ~sum & 0xffff;
+	ic[2] = (unsigned char)(sum >> 8); ic[3] = (unsigned char)sum;
+	memset(&to, 0, sizeof to);
+	to.sin_len = sizeof to; to.sin_family = AF_INET; to.sin_addr = ip->ip_src;
+	return sendto(s, pkt, n, 0, (struct sockaddr *)&to, sizeof to) < 0 ? -1 : 0;
+}
+
 /* WiFi Tether: share only while the WiFi Tether switch is on (file missing = on)
  * and wifitetherd has linked our anchor into the ruleset (the anchor exists).
  * Until then wait quietly instead of failing every second. */
@@ -388,12 +442,18 @@ static int allowed(void) {
 }
 
 static int run(void) {
-	char own[IFNAMSIZ] = "", cur[IFNAMSIZ] = "", cur_net[40] = "", stat[160];
+	char own[IFNAMSIZ] = "", cur[IFNAMSIZ] = "", cur_net[40] = "", stat[200];
 	int kq = kqueue(), tries = 0;
 	pid_t nepid = 0;
 	time_t restart_at = 0;
 	int u = utun_open(own); if (u < 0) return 1;
 	int rs = socket(AF_INET, SOCK_RAW, IPPROTO_RAW); if (rs < 0) { perror("raw"); return 1; }
+	/* WiFi Tether: unbound raw socket for ICMP replies to hotspot clients */
+	int ls = socket(AF_INET, SOCK_RAW, IPPROTO_RAW); if (ls < 0) { perror("raw"); return 1; }
+	{ int one = 1; setsockopt(ls, IPPROTO_IP, IP_HDRINCL, &one, sizeof one); }
+	time_t ne_retry = 0;          /* WiFi Tether: next search for a VPN extension */
+	unsigned long long nf = 0;    /* WiFi Tether: "fragmentation needed" replies sent */
+	unsigned nf_sec = 0;          /* and how many this second */
 	int on = 1, sb = 1 << 20;
 	setsockopt(rs, IPPROTO_IP, IP_HDRINCL, &on, sizeof on);
 	setsockopt(rs, SOL_SOCKET, SO_SNDBUF, &sb, sizeof sb);
@@ -411,6 +471,7 @@ static int run(void) {
 		if (now != tick) {
 			tick = now;
 			char n[IFNAMSIZ], a[32];
+			nf_sec = 0;   /* WiFi Tether */
 			int up = allowed() && find_tun(n, a);   /* WiFi Tether: follow the app switch */
 			/* the dead extension's utun lingers a few seconds: done only once a new extension runs */
 			if (up && nepid) { restart_at = 0; tries = 0; }
@@ -421,7 +482,10 @@ static int run(void) {
 			}
 			if (!nepid) {
 				if (ne_name[0]) nepid = find_proc(ne_name);
-				else if (up && (nepid = detect_ne())) logf_("detected VPN extension %s%s", ne_name, "");
+				else if (up && now >= ne_retry) {   /* WiFi Tether: IKEv2 VPNs have no extension; look every 30 s, not every second */
+					if ((nepid = detect_ne())) logf_("detected VPN extension %s%s", ne_name, "");
+					else ne_retry = now + 30;
+				}
 				if (nepid) {
 					struct kevent ke;
 					EV_SET(&ke, nepid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT | NOTE_EXIT_DETAIL, 0, NULL);
@@ -440,6 +504,12 @@ static int run(void) {
 				if (strcmp(n, cur) || strcmp(net, cur_net) || !count(PF_NAT) || !count(PF_PASS)) {
 					unsigned idx = if_nametoindex(n);
 					setsockopt(rs, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof idx);
+					{   /* WiFi Tether: remember the VPN interface's MTU */
+						struct ifreq mr; memset(&mr, 0, sizeof mr); strlcpy(mr.ifr_name, n, IFNAMSIZ);
+						int d = socket(AF_INET, SOCK_DGRAM, 0);
+						vpn_mtu = (d >= 0 && ioctl(d, SIOCGIFMTU, &mr) == 0 && mr.ifr_mtu >= 576 && mr.ifr_mtu <= 1500) ? mr.ifr_mtu : 1500;
+						if (d >= 0) close(d);
+					}
 					int r = install(n, a, own);
 					snprintf(stat, sizeof stat, "%s %s, hotspot %s, killed %d states", a, r ? "FAIL" : "ok", net, r ? 0 : kill_states());
 					if (!r || !failed_logged) logf_("install %s %s", n, stat);   /* WiFi Tether */
@@ -448,8 +518,8 @@ static int run(void) {
 				}
 			} else if (cur[0]) { del(PF_PASS); del(PF_NAT); kill_states(); cur[0] = 0; logf_("cleared%s%s", "", ""); }
 			if (now - report >= 60 && pk != last) {
-				snprintf(stat, sizeof stat, "pkts=%llu bytes=%llu bad=%llu big=%llu senderr=%llu throttled=%llu ne_peak=%.1fMB",
-					pk, by, bad, big, err, thr, peak);
+				snprintf(stat, sizeof stat, "pkts=%llu bytes=%llu bad=%llu big=%llu senderr=%llu throttled=%llu needfrag=%llu ne_peak=%.1fMB",
+					pk, by, bad, big, err, thr, nf, peak);
 				logf_("%s%s", stat, ""); report = now; last = pk; peak = 0;
 			}
 		}
@@ -480,6 +550,12 @@ static int run(void) {
 			if (len > 1500) { big++; continue; }
 			if (!cur[0]) continue;
 			if (drop && len >= THR_MINLEN && arc4random_uniform(1000) < drop) { thr++; continue; }
+			/* WiFi Tether: too big for the VPN. With Don't Fragment set, tell the client (it retries
+			 * smaller); without it the kernel fragments the raw send below. */
+			if (len > (size_t)vpn_mtu && (ip->ip_off & htons(IP_DF))) {
+				if (nf_sec < 200 && needfrag(ls, ip) == 0) { nf++; nf_sec++; }
+				continue;
+			}
 			/* raw IP_HDRINCL wants ip_len/ip_off in host order */
 			ip->ip_len = (u_short)len; ip->ip_off = ntohs(ip->ip_off);
 			struct sockaddr_in to; memset(&to, 0, sizeof to);
@@ -503,7 +579,7 @@ int main(int argc, char **argv) {
 		if (!o || argv[i][2] || i + 1 >= argc) return usage();
 		const char *v = argv[++i];
 		if (o == 'b') strlcpy(hs_if, v, sizeof hs_if);
-		else if (o == 'i') strlcpy(vpn_if, v, sizeof vpn_if);
+		else if (o == 'i') { strlcpy(vpn_if, v, sizeof vpn_if); vpn_auto_if = 0; }
 		else if (o == 'u') { uuid_t u; if (uuid_parse(v, u)) return usage(); strlcpy(vpnid, v, sizeof vpnid); vpn_auto = 0; }
 		else if (o == 'n') { strlcpy(ne_name, v, sizeof ne_name); ne_auto = 0; }
 		else if (o == 'm') ne_limit_mb = atoi(v);

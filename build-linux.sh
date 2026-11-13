@@ -45,7 +45,7 @@ LDFLAGS=(-fuse-ld=lld)
 echo "== Building background service"
 "$CLANG" "${CFLAGS[@]}" -I"$B/include" -idirafter "$XNU/bsd" -idirafter "$XNU/libkern" \
     -c src/daemon/pfnat.c -o "$B/pfnat.o"
-"$CLANG" "${CFLAGS[@]}" -fobjc-arc -c src/daemon/main.m -o "$B/daemon_main.o"
+"$CLANG" "${CFLAGS[@]}" -fobjc-arc -idirafter "$XNU/bsd" -c src/daemon/main.m -o "$B/daemon_main.o"
 "$CLANG" "${CFLAGS[@]}" "${LDFLAGS[@]}" "$B/pfnat.o" "$B/daemon_main.o" \
     -framework Foundation -o "$B/wifitetherd"
 

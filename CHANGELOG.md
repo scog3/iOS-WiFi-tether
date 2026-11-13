@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1
+
+- **Works with any full-tunnel VPN.** The VPN is now found by asking the kernel which
+  interface the iPhone's own internet traffic uses, instead of guessing from interface
+  names. Fixes IKEv2 VPNs (`ipsec` interfaces) and VPN apps using `198.18.x.x`
+  addresses not being detected.
+- **Fixes pages loading forever through the VPN.** VPN tunnels often take smaller
+  packets than the computer sends (IKEv2: 1280 bytes). WiFi Tether now tells the
+  computer to send smaller packets, the way a router does, instead of dropping them.
+- The VPN helper's own interface moved to `192.0.2.1`, an address no VPN uses.
+- The VPN helper looks for a VPN app process every 30 seconds instead of every second
+  when there isn't one (IKEv2 VPNs have none).
+
 ## 0.3.0
 
 - **Share the iPhone's VPN.** When a VPN is connected on the iPhone, the computer's
