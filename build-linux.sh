@@ -80,6 +80,7 @@ cp src/vpn/pftun-vpnid "$S/var/jb/usr/libexec/wifitether-vpnid"
 cp packaging/com.wifitether.vpn.plist "$S/var/jb/Library/LaunchDaemons/"
 mkdir -p "$S/var/jb/usr/share/doc/com.wifitether"
 cp src/vpn/LICENSE "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.pftun"
+cp src/daemon/LICENSE.AutoHotspot "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.AutoHotspot"
 
 ldid -Ssrc/app/entitlements.plist "$APP/WiFiTether"
 ldid -Ssrc/daemon/entitlements.plist "$S/var/jb/usr/libexec/wifitetherd"
@@ -91,7 +92,7 @@ cp packaging/postinst packaging/prerm "$S/DEBIAN/"
 chmod 755 "$S/DEBIAN/postinst" "$S/DEBIAN/prerm" "$APP/WiFiTether" "$S/var/jb/usr/libexec/wifitetherd" \
     "$S/var/jb/usr/libexec/wifitether-vpn" "$S/var/jb/usr/libexec/wifitether-vpnid"
 chmod 644 "$S/var/jb/Library/LaunchDaemons/"*.plist "$APP/Info.plist" "$S/DEBIAN/control" \
-    "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.pftun"
+    "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.pftun" "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.AutoHotspot"
 
 OUT="$B/com.wifitether_${VERSION}_iphoneos-arm64.deb"
 dpkg-deb --root-owner-group -Zgzip -b "$S" "$OUT"

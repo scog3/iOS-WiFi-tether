@@ -21,6 +21,8 @@
 #include <limits.h>
 #include <fcntl.h>
 #include <net/route.h>
+#include <objc/runtime.h>
+#include <objc/message.h>
 #include <net/if_dl.h>
 #include <notify.h>
 #include <dlfcn.h>
@@ -49,6 +51,7 @@ static int  g_savedFwd = -1;
 
 static dispatch_source_t g_timer, g_sigterm, g_sigint, g_dirWatch;
 static int g_notifyToken;
+static int g_timerRunning;   /* the 1-second check runs only while the switch is on */
 
 static void ensureDir(void)
 {
@@ -477,6 +480,184 @@ static void dhcpRestore(void)
     });
 }
 
+/* ── Personal Hotspot and Wi-Fi control ──────────────────────────
+ * The calls are the ones AutoHotspot uses (github.com/27445688/AutoHotspot,
+ * MIT, see LICENSE.AutoHotspot), which are what Settings uses:
+ *   MISManager setState: (WirelessModemSettings.bundle) turns the hotspot on/off,
+ *   WiFiManagerClient{Get,Set}Power (MobileWiFi) reads/sets Wi-Fi power,
+ *   WFClient setMISDiscoveryState:immediateDisable: (WiFiKit) hides the hotspot
+ *   from Wi-Fi devices.
+ * WiFi Tether only needs the hotspot for USB, so it never makes it visible over
+ * Wi-Fi: that is what takes the Wi-Fi chip away and drops the Wi-Fi connection.
+ * If Wi-Fi drops anyway, it is brought back. */
+#define MIS_ON  1023
+#define MIS_OFF 1022
+
+static int   g_hsInit;            /* 0 not tried, 1 ok, -1 failed */
+static int   g_hsCrashed;         /* a hotspot call crashed the service last time */
+
+/* Crash guard: Apple's hotspot code is loaded into this service, which is new on
+ * some iOS versions. If a call crashes, launchd restarts us and the marker is
+ * still there: then hotspot control stays off (and everything else keeps working)
+ * until the switch is turned off and on again. */
+#define WT_HS_GUARD WT_DIR "/hotspot-call"
+static void guardBegin(const char *what)
+{
+    FILE *f = fopen(WT_HS_GUARD, "w");
+    if (f) {
+        fputs(what, f);
+        fclose(f);
+    }
+}
+static void guardEnd(void)
+{
+    unlink(WT_HS_GUARD);
+}
+static id    g_mis, g_wf;
+static void *g_wifiMgr;
+static int  (*g_wifiGetPower)(void *);
+static void (*g_wifiSetPower)(void *, bool);
+
+static int hsInit(void)
+{
+    void *(*create)(CFAllocatorRef, int);
+    Class misClass, wfClass;
+
+    if (g_hsInit)
+        return g_hsInit > 0;
+    g_hsInit = -1;
+    if (g_hsCrashed)
+        return 0;
+    guardBegin("init");
+    dlopen("/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi", RTLD_LAZY);
+    dlopen("/System/Library/PrivateFrameworks/WiFiKit.framework/WiFiKit", RTLD_LAZY);
+    dlopen("/System/Library/PreferenceBundles/WirelessModemSettings.bundle/WirelessModemSettings", RTLD_LAZY);
+    create = dlsym(RTLD_DEFAULT, "WiFiManagerClientCreate");
+    g_wifiGetPower = dlsym(RTLD_DEFAULT, "WiFiManagerClientGetPower");
+    g_wifiSetPower = dlsym(RTLD_DEFAULT, "WiFiManagerClientSetPower");
+    misClass = objc_getClass("MISManager");
+    wfClass = objc_getClass("WFClient");
+    if (create)
+        g_wifiMgr = create(kCFAllocatorDefault, 0);
+    if (misClass)
+        g_mis = ((id (*)(Class, SEL))objc_msgSend)(misClass, NSSelectorFromString(@"sharedManager"));
+    if (wfClass)
+        g_wf = ((id (*)(Class, SEL))objc_msgSend)(wfClass, NSSelectorFromString(@"sharedInstance"));
+    guardEnd();
+    NSLog(@"wifitetherd: hotspot control: MISManager=%d WiFiManager=%d power=%d/%d WFClient=%d",
+          g_mis != nil, g_wifiMgr != NULL, g_wifiGetPower != NULL, g_wifiSetPower != NULL, g_wf != nil);
+    if (!g_mis)
+        return 0;
+    g_hsInit = 1;
+    return 1;
+}
+
+static int hotspotState(void)
+{
+    NSDictionary *d = scValue(@"com.apple.MobileInternetSharing");
+    return [d[@"State"] intValue];
+}
+
+static void hotspotSet(BOOL on)
+{
+    if (!hsInit())
+        return;
+    guardBegin("setState");
+    ((void (*)(id, SEL, int))objc_msgSend)(g_mis, NSSelectorFromString(@"setState:"), on ? MIS_ON : MIS_OFF);
+    guardEnd();
+}
+
+static void hotspotHide(void)
+{
+    SEL sel = NSSelectorFromString(@"setMISDiscoveryState:immediateDisable:");
+    if (hsInit() && g_wf && [g_wf respondsToSelector:sel]) {
+        guardBegin("discovery");
+        ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(g_wf, sel, NO, YES);
+        guardEnd();
+    }
+}
+
+static int wifiPowered(void)
+{
+    return (hsInit() && g_wifiMgr && g_wifiGetPower) ? g_wifiGetPower(g_wifiMgr) != 0 : -1;
+}
+
+static void wifiSetPower(BOOL on)
+{
+    if (hsInit() && g_wifiMgr && g_wifiSetPower) {
+        guardBegin("wifiPower");
+        g_wifiSetPower(g_wifiMgr, on);
+        guardEnd();
+    }
+}
+
+static time_t g_lastWifiUp;       /* last time Wi-Fi had an address */
+static time_t g_hsNextTry, g_hsWindow;
+static int    g_hsTries;
+static time_t g_wifiNextFix;
+static int    g_wifiFixStep;
+static int    g_lastEnabled = -1;
+
+/* Called every second while the switch is on. Returns a message for the app, or nil. */
+static NSString *controlHotspot(const WTIf *up, const WTIf *lan)
+{
+    time_t now = time(NULL);
+    int hs = hotspotState();
+    BOOL hsOn = hs == MIS_ON || lan->ok;
+
+    if (up->ok) {
+        g_lastWifiUp = now;
+        g_wifiFixStep = 0;
+    }
+
+    /* Hotspot off: turn it on. At most 3 times in 10 minutes, so we don't
+     * fight iOS (or you) forever. */
+    if (!hsOn) {
+        if (now - g_hsWindow > 600) {
+            g_hsWindow = now;
+            g_hsTries = 0;
+        }
+        if (now >= g_hsNextTry && g_hsTries < 3) {
+            if (!hsInit())
+                return g_hsCrashed
+                    ? @"Turning Personal Hotspot on automatically crashed on this iPhone, so it's off. Turn Personal Hotspot on in Settings."
+                    : @"Couldn't reach iOS's Personal Hotspot controls. Turn Personal Hotspot on in Settings.";
+            NSLog(@"wifitetherd: turning on Personal Hotspot (state %d)", hs);
+            hotspotSet(YES);
+            g_hsTries++;
+            g_hsNextTry = now + 10;
+        }
+        if (g_hsTries >= 3 && now >= g_hsNextTry)
+            return @"Personal Hotspot keeps turning off. Turn it on in Settings, or switch WiFi Tether off and on again.";
+        return @"Turning on Personal Hotspot…";
+    }
+
+    /* Hotspot on but Wi-Fi gone, and it was connected in the last 2 minutes:
+     * most likely the hotspot took the Wi-Fi chip. Up to 3 steps per drop. */
+    if (!up->ok && g_lastWifiUp && now - g_lastWifiUp < 120 && g_wifiFixStep < 3 && now >= g_wifiNextFix) {
+        int pw = wifiPowered();
+        if (g_wifiFixStep == 0) {
+            NSLog(@"wifitetherd: Wi-Fi dropped; hiding the hotspot from Wi-Fi devices (power %d)", pw);
+            hotspotHide();
+            if (pw == 0)
+                wifiSetPower(YES);
+        } else if (pw == 0) {
+            NSLog(@"wifitetherd: Wi-Fi still off; turning it on");
+            wifiSetPower(YES);
+        } else {
+            NSLog(@"wifitetherd: Wi-Fi on but not connected; turning it off and on");
+            wifiSetPower(NO);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1500 * NSEC_PER_MSEC)),
+                           dispatch_get_main_queue(), ^{ wifiSetPower(YES); });
+        }
+        g_wifiFixStep++;
+        g_wifiNextFix = now + 8;
+    }
+    if (!up->ok && g_lastWifiUp && now - g_lastWifiUp < 120 && g_wifiFixStep > 0)
+        return @"Reconnecting Wi-Fi…";
+    return nil;
+}
+
 static void writeStatus(NSDictionary *d)
 {
     ensureDir();
@@ -496,6 +677,29 @@ static void reconcile(void)
         trimLog(WT_DIR "/daemon.log");
         trimLog(WT_DIR "/vpn.log");
 
+        /* Switch flipped on: start fresh. Flipped off: turn the hotspot off. */
+        if (en && g_lastEnabled == 0 && g_hsCrashed) {
+            g_hsCrashed = 0;   /* you switched off and on: try once more */
+            g_hsInit = 0;
+        }
+        if (en && g_lastEnabled != 1) {
+            g_hsTries = 0;
+            g_hsNextTry = 0;
+            g_hsWindow = time(NULL);
+            g_wifiFixStep = 0;
+            if (up.ok)
+                g_lastWifiUp = time(NULL);
+        }
+        if (!en && g_lastEnabled == 1 && (hotspotState() == MIS_ON || lan.ok)) {
+            NSLog(@"wifitetherd: switch off; turning off Personal Hotspot");
+            hotspotSet(NO);
+        }
+        g_lastEnabled = en;
+
+        NSString *control = en ? controlHotspot(&up, &lan) : nil;
+        if (en && !lan.ok)
+            lan = findIf(1);
+
         st[@"enabled"] = @(en);
         st[@"wifi"] = up.ok ? ipStr(up.ip) : @"";
         st[@"hotspot"] = lan.ok ? [NSString stringWithFormat:@"%@ on %s", ipStr(lan.ip), lan.name] : @"";
@@ -513,7 +717,9 @@ static void reconcile(void)
         if (!en || !up.ok || !lan.ok) {
             teardown();
             writeVpnIf("");
-            state = !en ? @"off" : (!up.ok ? @"nowifi" : @"nohotspot");
+            state = !en ? @"off" : (!up.ok ? @"nowifi" : (hotspotState() == MIS_ON ? @"ready" : @"nohotspot"));
+            if (control)
+                detail = control;
         } else {
             in_addr_t dns = findDNS();
             char key[160], err[256] = "";
@@ -600,10 +806,23 @@ static void reconcile(void)
             }
         }
 
+        if (control && [state isEqualToString:@"active"] && !detail.length)
+            detail = control;
         st[@"state"] = state;
         st[@"detail"] = detail;
         st[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
         writeStatus(st);
+
+        /* Switch off: stop the 1-second check, so nothing wakes up until the
+         * switch changes (the app posts WT_NOTIFY). */
+        if (g_timer && en != g_timerRunning) {
+            if (en)
+                dispatch_resume(g_timer);
+            else
+                dispatch_suspend(g_timer);
+            g_timerRunning = en;
+            NSLog(@"wifitetherd: switch %s", en ? "on" : "off; sleeping");
+        }
     }
 }
 
@@ -645,10 +864,44 @@ static void watchBootpdDir(void)
     dispatch_resume(g_dirWatch);
 }
 
+/* `wifitetherd --cleanup`: remove everything wifitetherd adds (used when
+ * uninstalling; launchctl unload may kill the service without a chance to). */
+static int cleanup(void)
+{
+    char a[64] = "";
+    if (pfn_open(NULL, 0) == 0) {
+        pfn_filter_hook_remove();
+        if (pfn_pick_anchor(a, sizeof(a), NULL, 0) == 0 && !a[0])
+            pfn_clear("", NULL, 0);
+        pfn_clear(WT_FALLBACK_ANCHOR, NULL, 0);
+    }
+    dhcpRestore();
+    writeVpnIf("");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--cleanup") == 0) {
+        @autoreleasepool {
+            return cleanup();
+        }
+    }
     @autoreleasepool {
         ensureDir();
+        {
+            char what[32] = "";
+            FILE *f = fopen(WT_HS_GUARD, "r");
+            if (f) {
+                if (!fgets(what, sizeof(what), f))
+                    what[0] = 0;
+                fclose(f);
+                unlink(WT_HS_GUARD);
+                g_hsCrashed = 1;
+                NSLog(@"wifitetherd: the last hotspot call (%s) crashed; automatic hotspot control is off "
+                      "until the switch is turned off and on", what);
+            }
+        }
         g_sigterm = watchSignal(SIGTERM);
         g_sigint = watchSignal(SIGINT);
 
@@ -662,11 +915,13 @@ int main(int argc, char **argv)
         dispatch_source_set_timer(g_timer, dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC),
                                   1 * NSEC_PER_SEC, NSEC_PER_SEC / 10);
         dispatch_source_set_event_handler(g_timer, ^{ reconcile(); });
-        dispatch_resume(g_timer);
+        /* Created suspended; reconcile() resumes it while the switch is on. */
 
         NSLog(@"wifitetherd: started");
         reconcile();
     }
-    dispatch_main();
+    /* Apple's hotspot and Wi-Fi code answers through the main run loop
+     * (dispatch_main would never run it); main-queue blocks run here too. */
+    CFRunLoopRun();
     return 0;
 }

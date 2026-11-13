@@ -6,6 +6,8 @@ LD=/var/jb/Library/LaunchDaemons
 launchctl unload "$LD/com.wifitether.vpn.plist" >/dev/null 2>&1 || true
 /var/jb/usr/libexec/wifitether-vpn del >/dev/null 2>&1 || true
 launchctl unload "$LD/com.wifitether.daemon.plist" >/dev/null 2>&1 || true
+# launchctl unload may kill the service before it can tidy up; do it here.
+/var/jb/usr/libexec/wifitetherd --cleanup >/dev/null 2>&1 || true
 
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
     uicache -u /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0
+
+- **One switch does everything.** Turning WiFi Tether on now turns Personal Hotspot on
+  for you, without dropping Wi-Fi, and keeps it on, including after re-jailbreaking.
+  Turning it off turns Personal Hotspot off. No more Settings page, Control Center or
+  "turn on Wi-Fi?" prompt.
+- The hotspot is switched on quietly, only for USB: it isn't made visible to Wi-Fi
+  devices, which is what made iOS disconnect Wi-Fi. If Wi-Fi drops anyway, it's
+  reconnected automatically.
+- If the hotspot turns itself off while the switch is on, it's turned back on (at most
+  three times in 10 minutes).
+- **Nothing runs in the background while the switch is off.** Both services sleep until
+  the switch changes, instead of checking every second.
+- New **Ready: plug in the USB cable** status.
+- Uninstalling now always removes the routing rules and gateway settings.
+- Hotspot and Wi-Fi control is based on [AutoHotspot](https://github.com/27445688/AutoHotspot)
+  by 张小生 (MIT).
+
 ## 0.3.1
 
 - **Works with any full-tunnel VPN.** The VPN is now found by asking the kernel which

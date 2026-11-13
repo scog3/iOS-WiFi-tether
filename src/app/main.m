@@ -25,6 +25,7 @@
     UILabel  *_dns;
     UILabel  *_vpn;
     NSTimer  *_timer;
+    unsigned  _ticks;
 }
 
 - (UILabel *)labelWithSize:(CGFloat)size weight:(UIFontWeight)weight color:(UIColor *)color
@@ -102,17 +103,19 @@
     _vpn = [self labelWithSize:15 weight:UIFontWeightMedium color:UIColor.labelColor];
 
     UIButton *hotspot = [UIButton buttonWithType:UIButtonTypeSystem];
-    [hotspot setTitle:@"Open Personal Hotspot settings" forState:UIControlStateNormal];
+    [hotspot setTitle:@"Personal Hotspot settings" forState:UIControlStateNormal];
     hotspot.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightMedium];
     hotspot.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
     [hotspot addTarget:self action:@selector(openHotspot) forControlEvents:UIControlEventTouchUpInside];
 
     UILabel *help = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
     help.text = @"1. Connect this iPhone to Wi-Fi.\n"
-                @"2. Turn on Personal Hotspot (needs the Share tweak).\n"
+                @"2. Turn the switch on. It turns Personal Hotspot on for you and keeps Wi-Fi connected.\n"
                 @"3. Plug the iPhone into the computer with a USB cable.\n\n"
-                @"The computer gets internet through this iPhone's Wi-Fi. Leave this switch on and it works automatically whenever all three are true.\n\n"
-                @"If a VPN is connected on this iPhone, the computer's traffic goes through the VPN too.";
+                @"The computer gets internet through this iPhone's Wi-Fi, or through its VPN when one is connected. "
+                @"Leave the switch on and it stays ready, even after re-jailbreaking. "
+                @"Switch it off to turn Personal Hotspot off; the background services then sleep and use no battery.\n\n"
+                @"Needs the Share tweak. Opening the Personal Hotspot settings page can disconnect Wi-Fi; WiFi Tether reconnects it.";
 
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
         title, subtitle,
@@ -154,6 +157,7 @@
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
+    notify_post(WT_NOTIFY);   /* the service answers with a fresh status, even while asleep */
     [self refresh];
     _timer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(refresh)
                                             userInfo:nil repeats:YES];
@@ -180,6 +184,8 @@
 
 - (void)refresh
 {
+    if (++_ticks % 3 == 0)
+        notify_post(WT_NOTIFY);   /* keep the status fresh while the app is open */
     if (!_toggle.isTracking)
         _toggle.on = [self enabledSetting];
 
@@ -213,12 +219,16 @@
         [self showState:@"Sharing Wi-Fi over USB" color:UIColor.systemGreenColor];
     } else if ([state isEqualToString:@"off"]) {
         [self showState:@"Off" color:UIColor.systemGrayColor];
+        _detail.text = @"Personal Hotspot is off and the background services are asleep.";
     } else if ([state isEqualToString:@"nowifi"]) {
         [self showState:@"Waiting for Wi-Fi" color:UIColor.systemOrangeColor];
         _detail.text = @"Connect this iPhone to a Wi-Fi network.";
+    } else if ([state isEqualToString:@"ready"]) {
+        [self showState:@"Ready: plug in the USB cable" color:UIColor.systemBlueColor];
     } else if ([state isEqualToString:@"nohotspot"]) {
-        [self showState:@"Waiting for Personal Hotspot" color:UIColor.systemOrangeColor];
-        _detail.text = @"Turn on Personal Hotspot, then plug in the USB cable.";
+        [self showState:@"Starting Personal Hotspot" color:UIColor.systemOrangeColor];
+        if (![st[@"detail"] length])
+            _detail.text = @"If this doesn't change, plug in the USB cable or turn Personal Hotspot on in Settings.";
     } else if ([state isEqualToString:@"error"]) {
         [self showState:@"Couldn't set up sharing" color:UIColor.systemRedColor];
     } else {

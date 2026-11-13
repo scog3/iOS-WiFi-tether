@@ -32,7 +32,9 @@
  *    with ICMP "fragmentation needed" (like a router) so it sends smaller packets; otherwise the
  *    kernel fragments them. (e.g. IKEv2 tunnels have an MTU of 1280.)
  *  - The search for a VPN extension process runs every 30 s instead of every second when
- *    none is found (IKEv2 VPNs have none). */
+ *    none is found (IKEv2 VPNs have none).
+ *  - While the WiFi Tether switch is off it sleeps (no 1-second loop) until the switch
+ *    changes (notification com.wifitether.changed). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +51,7 @@
 #include <dlfcn.h>
 #include <uuid/uuid.h>
 #include <sys/kern_control.h>
+#include <notify.h>   /* WiFi Tether */
 #include <sys/sys_domain.h>
 #include <net/if.h>
 #include <net/pfvar.h>
@@ -428,13 +431,16 @@ static int needfrag(int s, const struct ip *ip) {
 /* WiFi Tether: share only while the WiFi Tether switch is on (file missing = on)
  * and wifitetherd has linked our anchor into the ruleset (the anchor exists).
  * Until then wait quietly instead of failing every second. */
-static int allowed(void) {
+static int switch_on(void) {
 	FILE *f = fopen(WT_ENABLED, "r");
-	if (f) {
-		int c = fgetc(f);
-		fclose(f);
-		if (c == '0') return 0;
-	}
+	if (!f) return 1;
+	int c = fgetc(f);
+	fclose(f);
+	return c != '0';
+}
+
+static int allowed(void) {
+	if (!switch_on()) return 0;
 	struct pfioc_rule pr; memset(&pr, 0, sizeof pr);
 	strlcpy(pr.anchor, ANCHOR, sizeof pr.anchor);
 	pr.rule.action = PF_NAT;
@@ -466,6 +472,10 @@ static int run(void) {
 	long long polled = 0;
 	time_t tick = 0, report = time(NULL);
 	unsigned char buf[65536];
+	/* WiFi Tether: wake-up for the app switch while sleeping */
+	int wake = -1, wake_token = 0;
+	if (notify_register_file_descriptor("com.wifitether.changed", &wake, 0, &wake_token) != NOTIFY_STATUS_OK) wake = -1;
+	int sleeping = 0;
 	for (;;) {
 		time_t now = time(NULL);
 		if (now != tick) {
@@ -525,9 +535,15 @@ static int run(void) {
 		}
 		long long ms = now_ms();
 		if (ms - polled >= 100) { polled = ms; drop = throttle(nepid, nelim, &peak); }
+		/* WiFi Tether: switch off and nothing installed: sleep until the switch changes */
+		int zz = wake >= 0 && !cur[0] && !restart_at && !switch_on();
+		if (zz != sleeping) { sleeping = zz; logf_("%s%s", zz ? "switch off; sleeping" : "switch on", ""); }
 		fd_set rf; FD_ZERO(&rf); FD_SET(u, &rf); FD_SET(kq, &rf);
+		int mx = u > kq ? u : kq;
+		if (wake >= 0) { FD_SET(wake, &rf); if (wake > mx) mx = wake; }
 		struct timeval tv = {1, 0};
-		if (select((u > kq ? u : kq) + 1, &rf, NULL, NULL, &tv) <= 0) continue;
+		if (select(mx + 1, &rf, NULL, NULL, zz ? NULL : &tv) <= 0) continue;
+		if (wake >= 0 && FD_ISSET(wake, &rf)) { int t; read(wake, &t, sizeof t); tick = 0; }
 		if (FD_ISSET(kq, &rf)) {
 			struct kevent ke; struct timespec z = {0, 0};
 			if (kevent(kq, NULL, 0, &ke, 1, &z) == 1) {

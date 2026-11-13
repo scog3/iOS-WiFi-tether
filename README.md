@@ -36,17 +36,20 @@ It's a free alternative to paid tweaks such as Tethera and TetherMe.
 ## Use
 
 1. Connect the iPhone to **Wi-Fi**.
-2. Turn on **Personal Hotspot** (Settings → Personal Hotspot).
+2. Open **WiFi Tether** and turn the switch on. It turns Personal Hotspot on for you
+   and keeps Wi-Fi connected.
 3. Plug the iPhone into the computer.
 
 That's it: the computer gets an address, gateway and DNS automatically and is online.
-Open the **WiFi Tether** app to see the status or switch sharing off.
+Leave the switch on and it stays ready, including after re-jailbreaking. Switch it off
+to turn Personal Hotspot off; the background services then sleep and use no battery.
 
 | Status in the app | Meaning |
 | --- | --- |
 | 🟢 Sharing Wi-Fi over USB | Working |
+| 🔵 Ready: plug in the USB cable | Personal Hotspot is on; plug in |
+| 🟠 Starting Personal Hotspot | Turning the hotspot on; see the message underneath if it stays |
 | 🟠 Waiting for Wi-Fi | Connect the iPhone to a Wi-Fi network |
-| 🟠 Waiting for Personal Hotspot | Turn on Personal Hotspot, then plug in |
 | 🔴 Couldn't set up sharing | See the message underneath, and the log below |
 | 🔴 Background service isn't running | Re-jailbreak or reinstall the package |
 
@@ -76,6 +79,9 @@ This part is based on [pftun](https://github.com/maliv2/ios-hotspot-vpn-keepaliv
 by Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
 
 ## Troubleshooting
+
+- **Personal Hotspot won't turn on by itself.** Turn it on in Settings once. Opening
+  that page can disconnect Wi-Fi; WiFi Tether reconnects it within a few seconds.
 
 - **Computer says "No internet" or "Unidentified network".** Unplug and plug the
   iPhone back in so the computer asks for a new address. On Windows,
@@ -109,6 +115,15 @@ address but has no route to the internet. WiFi Tether's background service
    pf anchors of its own, so `wifitetherd` links pftun's anchor `wifitether.vpn`
    into the main ruleset with a `nat-anchor` and a filter `anchor` rule.
 
+4. **Personal Hotspot and Wi-Fi.** The switch turns the hotspot on with the call
+   Settings uses (`MISManager setState:`), adapted from
+   [AutoHotspot](https://github.com/27445688/AutoHotspot). It never makes the hotspot
+   visible over Wi-Fi (WiFiKit's discovery state), because that takes over the Wi-Fi
+   chip and disconnects Wi-Fi. If Wi-Fi drops while the hotspot is on, it hides the
+   hotspot and turns Wi-Fi back on (MobileWiFi `WiFiManagerClientSetPower`).
+   While the switch is off, `wifitetherd` and the VPN helper wait for the notification
+   `com.wifitether.changed` instead of checking every second.
+
 Everything is removed again when you switch sharing off or uninstall.
 
 ## Build it yourself
@@ -126,6 +141,9 @@ and Apple's open-source XNU sources for the packet filter and other private head
 
 - **[Share](https://github.com/amineross/share)** by amineross, which makes the
   SIM-less hotspot possible. WiFi Tether depends on it.
+- **[AutoHotspot](https://github.com/27445688/AutoHotspot)** by 张小生 (MIT licence,
+  included in `src/daemon/LICENSE.AutoHotspot`), whose calls switch Personal Hotspot
+  and Wi-Fi.
 - **[pftun](https://github.com/maliv2/ios-hotspot-vpn-keepalive)** by Muhammet Ali
   Aydın (MIT licence, included in `src/vpn/LICENSE`), which does the VPN sharing.
 - Packet filter structures from Apple's open-source

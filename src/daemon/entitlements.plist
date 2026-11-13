@@ -8,5 +8,12 @@
     <true/>
     <key>com.apple.private.skip-library-validation</key>
     <true/>
+    <!-- Personal Hotspot and Wi-Fi control: the grants Settings uses (as in AutoHotspot) -->
+    <key>com.apple.MobileInternetSharing.allow</key>
+    <true/>
+    <key>com.apple.wifi.manager-access</key>
+    <true/>
+    <key>com.apple.private.corewifi.internal</key>
+    <true/>
 </dict>
 </plist>

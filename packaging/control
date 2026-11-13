@@ -7,4 +7,4 @@ Depends: firmware (>= 15.0)
 Recommends: python3
 Maintainer: WiFi Tether
 Author: WiFi Tether
-Description: Share the iPhone's Wi-Fi connection with a computer over USB, through the iPhone's VPN when one is connected. Needs Personal Hotspot to be available (for example with the Share tweak). python3 is only used to restart a VPN that iOS stopped.
+Description: Share the iPhone's Wi-Fi connection with a computer over USB, through the iPhone's VPN when one is connected. One switch turns Personal Hotspot on and keeps Wi-Fi connected. Needs Personal Hotspot to be available (for example with the Share tweak). python3 is only used to restart a VPN that iOS stopped.
