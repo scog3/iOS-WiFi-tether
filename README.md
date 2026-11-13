@@ -28,10 +28,18 @@ It's a free alternative to paid tweaks such as Tethera and TetherMe.
 
 ## Install
 
-1. Install **Share** from `https://aminerostane.com/repo` and respring.
-2. Download the latest `.deb` from this repository's
-   **[Releases](../../releases)** page in Safari on the iPhone.
-3. Open the file in **Filza** or **Sileo** and install it.
+**From Sileo (recommended):**
+
+1. In Sileo, add the source `https://scog3.github.io/iOS-WiFi-tether/`
+   (or open that page on the iPhone and tap **Add to Sileo**).
+2. Install **WiFi Tether**. It also adds the repo for the Share tweak, which it needs.
+3. Refresh Sileo, install **Share**, and respring.
+
+Updates then appear in Sileo automatically.
+
+**Or by hand:** download the latest `.deb` from this repository's
+**[Releases](../../releases)** page in Safari on the iPhone, open it in **Filza** and
+install it. Install **Share** from `https://aminerostane.com/repo` as well.
 
 ## Use
 
@@ -146,8 +154,9 @@ Everything is removed again when you switch sharing off or uninstall.
 
 ## Build it yourself
 
-Every push to this repository builds the `.deb` on GitHub Actions (Ubuntu) and
-publishes it as a release named after the version in `VERSION`, with that version's
+Every push to this repository builds the `.deb` on GitHub Actions (Ubuntu),
+publishes the Sileo repo with GitHub Pages (`make-repo.sh`; needs
+**Settings → Pages → Source: GitHub Actions**), and publishes the `.deb` as a release named after the version in `VERSION`, with that version's
 notes from [CHANGELOG.md](CHANGELOG.md). Building the same version again replaces its
 `.deb`; bump `VERSION` and add a changelog entry to make a new release. To build locally on Linux, install `clang`, `lld`,
 `ldid` and `dpkg`, then run `bash build-linux.sh`.

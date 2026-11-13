@@ -7,6 +7,15 @@ chown 501:501 /var/mobile/Library/WiFiTether
 
 uicache -p /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
 
+# WiFi Tether needs the Share tweak: add its repo to Sileo if it isn't there yet
+# (said in the package description). Left in place on uninstall.
+SRC=/var/jb/etc/apt/sources.list.d
+if ! grep -rqs "aminerostane.com/repo" "$SRC" /var/jb/etc/apt/sources.list; then
+    mkdir -p "$SRC"
+    printf 'Types: deb\nURIs: https://aminerostane.com/repo/\nSuites: ./\nComponents:\n' > "$SRC/share-aminerostane.sources"
+    echo "Added the Share tweak's repo (aminerostane.com/repo). Refresh Sileo, then install Share."
+fi
+
 # The upstream VPN tool (com.mali.pftun) does the same job; two copies would fight.
 if [ -f $LD/com.mali.pftun.plist ]; then
     echo "Note: com.mali.pftun (ios-hotspot-vpn-keepalive) is installed. WiFi Tether includes it; stopping the separate copy."

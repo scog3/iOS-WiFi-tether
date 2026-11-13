@@ -1,8 +1,15 @@
 # Changelog
 
+## 0.4.3
+
+- **Install and update from Sileo.** WiFi Tether now has its own repo:
+  `https://scog3.github.io/iOS-WiFi-tether/`. Updates show up in Sileo like any tweak.
+- Installing WiFi Tether adds the Share tweak's repo to Sileo if it isn't there yet, and
+  Sileo offers Share alongside it.
+
 ## 0.4.2
 
-- Removed the *Personal Hotspot Settings* button as unnecessary.
+- Removed the *Personal Hotspot settings* button.
 
 ## 0.4.1
 
