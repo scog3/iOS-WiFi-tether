@@ -33,6 +33,8 @@
  *    kernel fragments them. (e.g. IKEv2 tunnels have an MTU of 1280.)
  *  - The search for a VPN extension process runs every 30 s instead of every second when
  *    none is found (IKEv2 VPNs have none).
+ *  - The VPN counts as changed (rules reinstalled, client states dropped) when its address or
+ *    interface index changes too, not only its name: a reconnect can reuse the name.
  *  - While the WiFi Tether switch is off it sleeps (no 1-second loop) until the switch
  *    changes (notification com.wifitether.changed). */
 #include <stdio.h>
@@ -449,6 +451,7 @@ static int allowed(void) {
 
 static int run(void) {
 	char own[IFNAMSIZ] = "", cur[IFNAMSIZ] = "", cur_net[40] = "", stat[200];
+	char cur_addr[32] = ""; unsigned cur_idx = 0;   /* WiFi Tether: also watch address and index */
 	int kq = kqueue(), tries = 0;
 	pid_t nepid = 0;
 	time_t restart_at = 0;
@@ -511,8 +514,8 @@ static int run(void) {
 			}
 			if (up && forwarding_on()) {
 				char net[40]; snprintf(net, sizeof net, "%s/%d", hs_net, hs_bits);
-				if (strcmp(n, cur) || strcmp(net, cur_net) || !count(PF_NAT) || !count(PF_PASS)) {
-					unsigned idx = if_nametoindex(n);
+				unsigned idx = if_nametoindex(n);   /* WiFi Tether: moved up, compared below */
+				if (strcmp(n, cur) || strcmp(net, cur_net) || strcmp(a, cur_addr) || idx != cur_idx || !count(PF_NAT) || !count(PF_PASS)) {
 					setsockopt(rs, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof idx);
 					{   /* WiFi Tether: remember the VPN interface's MTU */
 						struct ifreq mr; memset(&mr, 0, sizeof mr); strlcpy(mr.ifr_name, n, IFNAMSIZ);
@@ -524,7 +527,7 @@ static int run(void) {
 					snprintf(stat, sizeof stat, "%s %s, hotspot %s, killed %d states", a, r ? "FAIL" : "ok", net, r ? 0 : kill_states());
 					if (!r || !failed_logged) logf_("install %s %s", n, stat);   /* WiFi Tether */
 					failed_logged = r != 0;
-					if (!r) { strlcpy(cur, n, sizeof cur); strlcpy(cur_net, net, sizeof cur_net); } else cur[0] = 0;
+					if (!r) { strlcpy(cur, n, sizeof cur); strlcpy(cur_net, net, sizeof cur_net); strlcpy(cur_addr, a, sizeof cur_addr); cur_idx = idx; } else cur[0] = 0;
 				}
 			} else if (cur[0]) { del(PF_PASS); del(PF_NAT); kill_states(); cur[0] = 0; logf_("cleared%s%s", "", ""); }
 			if (now - report >= 60 && pk != last) {

@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
+#include <netinet/tcp.h>
 #include <stdio.h>
 
 #ifndef PRIVATE
@@ -173,42 +174,114 @@ static int filter_hook_index(u_int32_t *ticket)
     return -1;
 }
 
-int pfn_filter_hook_present(void)
+/* Our rules in the main filter ruleset (see pfn_filter_hook_add). */
+#define WT_FILTER_RULES 3
+
+static int filter_hook_count(void)
 {
-    u_int32_t t;
-    return g_fd >= 0 && filter_hook_index(&t) >= 0;
+    u_int32_t t = 0, mine = 0;
+    if (ruleset_info("", PF_PASS, &t, &mine) < 0)
+        return -1;
+    return (int)mine;
 }
 
-int pfn_filter_hook_add(char *err, size_t errlen)
+int pfn_filter_hook_present(void)
+{
+    return g_fd >= 0 && filter_hook_count() == WT_FILTER_RULES;
+}
+
+/* Add one rule at the head of the main filter ruleset. */
+static int filter_add_head(struct pf_rule *r, const char *call, const char *what, char *err, size_t errlen)
 {
     struct pfioc_pooladdr pp;
     struct pfioc_rule pr;
     u_int32_t ticket;
 
-    if (filter_hook_index(&ticket) >= 0)
-        return 0;
-
     memset(&pp, 0, sizeof(pp));
     if (ioctl(g_fd, DIOCBEGINADDRS, &pp) < 0) {
-        ERR("VPN hook: DIOCBEGINADDRS failed: %s", strerror(errno));
+        ERR("%s: DIOCBEGINADDRS failed: %s", what, strerror(errno));
+        return -1;
+    }
+    if (filter_hook_index(&ticket) == -2) {
+        ERR("%s: can't read filter rules: %s", what, strerror(errno));
         return -1;
     }
     memset(&pr, 0, sizeof(pr));
-    if (filter_hook_index(&ticket) == -2) {
-        ERR("VPN hook: can't read filter rules: %s", strerror(errno));
-        return -1;
-    }
     pr.action = PF_CHANGE_ADD_HEAD;
     pr.ticket = ticket;
     pr.pool_ticket = pp.ticket;
-    strlcpy(pr.anchor_call, "/" WT_VPN_ANCHOR, sizeof(pr.anchor_call));
-    pr.rule.action = PF_PASS;
-    pr.rule.af = AF_INET;
+    if (call)
+        strlcpy(pr.anchor_call, call, sizeof(pr.anchor_call));
+    memcpy(&pr.rule, r, sizeof(pr.rule));
     strlcpy(pr.rule.label, WT_LABEL, sizeof(pr.rule.label));
     if (ioctl(g_fd, DIOCCHANGERULE, &pr) < 0) {
-        ERR("VPN hook: couldn't add the filter anchor: %s", strerror(errno));
+        ERR("%s: DIOCCHANGERULE failed: %s", what, strerror(errno));
         return -1;
     }
+    return 0;
+}
+
+/*
+ * Main filter ruleset, in this order (each added at the head, so last first):
+ *   1. block return-rst in quick on <lan_if> inet proto tcp
+ *          from <lan subnet> to ! <lan subnet> flags /S
+ *      A packet of a connection the phone has no record of (because the route
+ *      changed: VPN on/off/switched and the old records were dropped) gets a
+ *      TCP reset straight away, so the computer reconnects at once instead of
+ *      retrying into nothing for about a minute.
+ *   2. anchor "/wifitether.vpn"           the VPN helper's rules
+ *   3. pass in quick on <lan_if> inet proto tcp
+ *          from <lan subnet> to ! <lan subnet> flags S/SA keep state
+ *      Records every new connection from the computer, so rule 1 only ever
+ *      hits connections whose record was dropped.
+ * Rules only see packets without a record; recorded ones skip all rules.
+ */
+int pfn_filter_hook_add(const char *lan_if, in_addr_t lan_ip, in_addr_t lan_mask, char *err, size_t errlen)
+{
+    struct pf_rule r;
+
+    pfn_filter_hook_remove();
+
+    /* 3. record new connections */
+    memset(&r, 0, sizeof(r));
+    r.action = PF_PASS;
+    r.direction = PF_IN;
+    r.quick = 1;
+    r.af = AF_INET;
+    r.proto = IPPROTO_TCP;
+    r.keep_state = PF_STATE_NORMAL;
+    r.flags = TH_SYN;
+    r.flagset = TH_SYN | TH_ACK;
+    strlcpy(r.ifname, lan_if, sizeof(r.ifname));
+    set_addrmask(&r.src.addr, lan_ip & lan_mask, lan_mask);
+    set_addrmask(&r.dst.addr, lan_ip & lan_mask, lan_mask);
+    r.dst.neg = 1;
+    if (filter_add_head(&r, NULL, "Connection tracking rule", err, errlen) < 0)
+        return -1;
+
+    /* 2. VPN helper's anchor */
+    memset(&r, 0, sizeof(r));
+    r.action = PF_PASS;
+    r.af = AF_INET;
+    if (filter_add_head(&r, "/" WT_VPN_ANCHOR, "VPN hook", err, errlen) < 0)
+        return -1;
+
+    /* 1. reset connections that lost their record */
+    memset(&r, 0, sizeof(r));
+    r.action = PF_DROP;
+    r.rule_flag = PFRULE_RETURNRST;
+    r.direction = PF_IN;
+    r.quick = 1;
+    r.af = AF_INET;
+    r.proto = IPPROTO_TCP;
+    r.flags = 0;
+    r.flagset = TH_SYN;
+    strlcpy(r.ifname, lan_if, sizeof(r.ifname));
+    set_addrmask(&r.src.addr, lan_ip & lan_mask, lan_mask);
+    set_addrmask(&r.dst.addr, lan_ip & lan_mask, lan_mask);
+    r.dst.neg = 1;
+    if (filter_add_head(&r, NULL, "Reset rule", err, errlen) < 0)
+        return -1;
     return 0;
 }
 
@@ -401,8 +474,9 @@ int pfn_apply(const struct pfn_cfg *c, char *err, size_t errlen)
         ERR("Couldn't commit packet filter rules: %s", strerror(errno));
         goto fail;
     }
-    /* The Wi-Fi rules are in. A failing VPN hook only affects VPN sharing. */
-    pfn_filter_hook_add(err, errlen);
+    /* The Wi-Fi rules are in. A failing filter hook only affects VPN sharing
+     * and fast reconnects; wifitetherd retries it and logs the reason. */
+    pfn_filter_hook_add(c->lan_if, c->lan_ip, c->lan_mask, NULL, 0);
     return 0;
 
 fail:

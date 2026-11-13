@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1
+
+- **Connections switch over instantly** when the VPN connects, disconnects or changes
+  location. Before, the computer kept sending on connections that no longer went
+  anywhere and took about a minute to give up; now the phone tells it straight away
+  that they're closed, so it reconnects at once through the new route.
+- The VPN also counts as changed when it reconnects with the same interface name but a
+  new address.
+- **Airplane mode.** Switching WiFi Tether on turns airplane mode off, and switching it
+  off turns airplane mode back on (only if WiFi Tether turned it off). If airplane mode
+  is turned on while sharing, a pop-up offers to turn it off again.
+- **Computer not connecting** (e.g. the first time on a new USB port): when a computer
+  is plugged in but hasn't connected after 10 seconds, the hotspot is restarted
+  automatically, the software version of replugging, and retried while it's plugged
+  in. New **Waiting for the computer** status shows what's happening.
+- New **Airplane mode is on** status.
+
 ## 0.4.0
 
 - **One switch does everything.** Turning WiFi Tether on now turns Personal Hotspot on

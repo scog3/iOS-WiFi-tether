@@ -591,6 +591,147 @@ static void wifiSetPower(BOOL on)
     }
 }
 
+/* ── Airplane mode ────────────────────────────────────────────────
+ * Personal Hotspot can't run in airplane mode (iOS stops it, reason 4, and
+ * ignores requests). Switching WiFi Tether on turns airplane mode off and
+ * remembers that (WT_AIR_RESTORE); switching off turns it back on.
+ * RadiosPreferences (AppSupport) is what Control Center's button uses. */
+#define WT_AIR_RESTORE WT_DIR "/airplane-restore"
+#define RADIOS_PLIST "/Library/Preferences/SystemConfiguration/com.apple.radios.plist"
+static id g_radios;
+
+/* 1 on, 0 off, -1 unknown */
+static int airplaneMode(void)
+{
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@RADIOS_PLIST];
+    id v = d[@"AirplaneMode"];
+    if ([v respondsToSelector:@selector(boolValue)])
+        return [v boolValue] ? 1 : 0;
+    v = scValue(@"com.apple.MobileInternetSharing")[@"Reason"];
+    return d ? 0 : ([v intValue] == 4 ? 1 : -1);
+}
+
+static int setAirplaneMode(BOOL on)
+{
+    SEL set = NSSelectorFromString(@"setAirplaneMode:"), sync = NSSelectorFromString(@"synchronize");
+    if (g_hsCrashed)
+        return -1;
+    if (!g_radios) {
+        Class c;
+        dlopen("/System/Library/PrivateFrameworks/AppSupport.framework/AppSupport", RTLD_LAZY);
+        c = objc_getClass("RadiosPreferences");
+        if (c)
+            g_radios = ((id (*)(id, SEL))objc_msgSend)(((id (*)(Class, SEL))objc_msgSend)(c, @selector(alloc)), @selector(init));
+    }
+    if (![g_radios respondsToSelector:set]) {
+        NSLog(@"wifitetherd: can't change airplane mode (RadiosPreferences missing)");
+        return -1;
+    }
+    guardBegin("airplane");
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(g_radios, set, on);
+    if ([g_radios respondsToSelector:sync])
+        ((void (*)(id, SEL))objc_msgSend)(g_radios, sync);
+    guardEnd();
+    NSLog(@"wifitetherd: airplane mode %s", on ? "on" : "off");
+    return 0;
+}
+
+/* A system pop-up (CFUserNotification, shown by SpringBoard). */
+typedef struct __WTUserNotification *WTUserNotificationRef;
+static WTUserNotificationRef g_alert;
+static CFRunLoopSourceRef g_alertSource;
+
+static void alertAnswered(WTUserNotificationRef n, CFOptionFlags response)
+{
+    if (g_alertSource) {
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), g_alertSource, kCFRunLoopDefaultMode);
+        CFRelease(g_alertSource);
+        g_alertSource = NULL;
+    }
+    if (g_alert) {
+        CFRelease((CFTypeRef)g_alert);
+        g_alert = NULL;
+    }
+    if ((response & 3) == 0) {   /* default button: turn airplane mode off */
+        if (setAirplaneMode(NO) == 0) {
+            FILE *f = fopen(WT_AIR_RESTORE, "w");
+            if (f)
+                fclose(f);
+        }
+    } else {
+        NSLog(@"wifitetherd: keeping airplane mode on");
+    }
+}
+
+static void askAirplane(NSString *message)
+{
+    static WTUserNotificationRef (*create)(CFAllocatorRef, CFTimeInterval, CFOptionFlags, SInt32 *, CFDictionaryRef);
+    static CFRunLoopSourceRef (*source)(CFAllocatorRef, WTUserNotificationRef,
+                                        void (*)(WTUserNotificationRef, CFOptionFlags), CFIndex);
+    SInt32 error = 0;
+    NSDictionary *d;
+
+    if (g_alert)
+        return;   /* one at a time */
+    if (!create) {
+        create = dlsym(RTLD_DEFAULT, "CFUserNotificationCreate");
+        source = dlsym(RTLD_DEFAULT, "CFUserNotificationCreateRunLoopSource");
+    }
+    if (!create || !source)
+        return;
+    d = @{ @"AlertHeader": @"Airplane Mode Is On",
+           @"AlertMessage": message,
+           @"DefaultButtonTitle": @"Turn Off Airplane Mode",
+           @"AlternateButtonTitle": @"Keep It On" };
+    g_alert = create(kCFAllocatorDefault, 120, 0, &error, (__bridge CFDictionaryRef)d);
+    if (!g_alert) {
+        NSLog(@"wifitetherd: couldn't show the airplane mode pop-up (%d)", (int)error);
+        return;
+    }
+    g_alertSource = source(kCFAllocatorDefault, g_alert, alertAnswered, 0);
+    if (g_alertSource)
+        CFRunLoopAddSource(CFRunLoopGetMain(), g_alertSource, kCFRunLoopDefaultMode);
+}
+
+/* ── Is a computer plugged in? ─────────────────────────────────────
+ * IOKit's external power adapter details: a computer's USB port reports the
+ * USB host family codes; chargers report others.
+ * 1 computer, 0 nothing or a charger, 2 power of unknown kind. */
+static int computerPlugged(void)
+{
+    static CFDictionaryRef (*details)(void);
+    static int tried;
+    CFDictionaryRef d;
+    uint32_t fam;
+    NSNumber *n;
+
+    if (!tried) {
+        tried = 1;
+        dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
+        details = dlsym(RTLD_DEFAULT, "IOPMCopyExternalPowerAdapterDetails");
+    }
+    if (!details)
+        return 2;
+    d = details();
+    if (!d)
+        return 0;
+    n = ((__bridge NSDictionary *)d)[@"FamilyCode"];
+    fam = (uint32_t)[n unsignedIntValue];
+    CFRelease(d);
+    if (!n)
+        return 2;
+    /* kIOPSFamilyCodeUSBHost, ...USBHostSuspended, ...USBChargingPortDownstream
+     * (a computer port that charges faster) */
+    if (fam == 0xE0004000u || fam == 0xE0004001u || fam == 0xE0004005u)
+        return 1;
+    if (fam == 0xE0004007u || fam == 0)
+        return 2;
+    return 0;
+}
+
+static time_t g_usbWaitStart, g_usbNextRetry, g_usbRestartUntil;
+static int    g_usbTries;
+
 static time_t g_lastWifiUp;       /* last time Wi-Fi had an address */
 static time_t g_hsNextTry, g_hsWindow;
 static int    g_hsTries;
@@ -599,11 +740,16 @@ static int    g_wifiFixStep;
 static int    g_lastEnabled = -1;
 
 /* Called every second while the switch is on. Returns a message for the app, or nil. */
-static NSString *controlHotspot(const WTIf *up, const WTIf *lan)
+static NSString *controlHotspot(const WTIf *up, const WTIf *lan, int air)
 {
     time_t now = time(NULL);
     int hs = hotspotState();
     BOOL hsOn = hs == MIS_ON || lan->ok;
+
+    if (air == 1)
+        return @"Personal Hotspot can't run in airplane mode. Turn airplane mode off; Wi-Fi can stay on.";
+    if (!hsOn && now < g_usbRestartUntil)
+        return nil;   /* we're restarting it for the computer (see usbWait) */
 
     if (up->ok) {
         g_lastWifiUp = now;
@@ -658,6 +804,43 @@ static NSString *controlHotspot(const WTIf *up, const WTIf *lan)
     return nil;
 }
 
+/* Hotspot on, but the computer hasn't set up the USB network. The first time
+ * on a new USB port Windows misses the phone switching it on; restarting the
+ * hotspot is the software version of replugging. Retries keep going while a
+ * computer is plugged in, further apart each time. Returns a status detail. */
+static NSString *usbWait(void)
+{
+    time_t now = time(NULL);
+    int pc = computerPlugged();
+    static const int gaps[] = { 15, 20, 30 };
+
+    if (pc == 0) {
+        g_usbWaitStart = 0;
+        return nil;
+    }
+    if (!g_usbWaitStart) {
+        g_usbWaitStart = now;
+        g_usbTries = 0;
+        g_usbNextRetry = now + 10;
+    }
+    if (now >= g_usbNextRetry && (pc == 1 || g_usbTries < 4)) {
+        g_usbTries++;
+        NSLog(@"wifitetherd: computer hasn't connected; restarting Personal Hotspot (try %d)", g_usbTries);
+        g_usbRestartUntil = now + 8;
+        hotspotSet(NO);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            hotspotSet(YES);
+        });
+        g_usbNextRetry = now + gaps[g_usbTries - 1 < 2 ? g_usbTries - 1 : 2];
+    }
+    if (pc != 1 && g_usbTries >= 4 && now >= g_usbNextRetry)
+        return @"Still not connected. Unplug the cable and plug it back in.";
+    if (!g_usbTries)
+        return @"Waiting for the computer to connect…";
+    return [NSString stringWithFormat:@"Waiting for the computer to connect… (try %d). "
+            "If the iPhone asks to Trust This Computer, tap Trust.", g_usbTries + 1];
+}
+
 static void writeStatus(NSDictionary *d)
 {
     ensureDir();
@@ -677,11 +860,43 @@ static void reconcile(void)
         trimLog(WT_DIR "/daemon.log");
         trimLog(WT_DIR "/vpn.log");
 
-        /* Switch flipped on: start fresh. Flipped off: turn the hotspot off. */
+        int air = airplaneMode();
+        static int lastAir = -1;
+
         if (en && g_lastEnabled == 0 && g_hsCrashed) {
             g_hsCrashed = 0;   /* you switched off and on: try once more */
             g_hsInit = 0;
         }
+
+        /* Airplane mode: switching on turns it off (and remembers that);
+         * switching off restores it; turning it on while switched on, or
+         * starting up switched on in airplane mode, asks with a pop-up. */
+        if (en && g_lastEnabled == 0 && air == 1) {
+            if (setAirplaneMode(NO) == 0) {
+                FILE *f = fopen(WT_AIR_RESTORE, "w");
+                if (f)
+                    fclose(f);
+                air = 0;
+            }
+        } else if (en && g_lastEnabled == -1 && air == 1) {
+            askAirplane(@"WiFi Tether is switched on, but Personal Hotspot can't run in airplane mode. "
+                        "Turn airplane mode off? Wi-Fi stays on.");
+        } else if (en && g_lastEnabled == 1 && air == 1 && lastAir == 0) {
+            askAirplane(@"Personal Hotspot has stopped, so the computer connected to this iPhone has lost "
+                        "its internet connection. Turn airplane mode off? Wi-Fi stays on.");
+        }
+        if (!en && g_lastEnabled == 1 && access(WT_AIR_RESTORE, F_OK) == 0) {
+            if (air == 0)
+                setAirplaneMode(YES);
+            unlink(WT_AIR_RESTORE);
+        }
+        if (en && air == 0 && lastAir == 1) {
+            g_hsTries = 0;          /* airplane mode just went off: start the hotspot again */
+            g_hsNextTry = 0;
+        }
+        lastAir = air;
+
+        /* Switch flipped on: start fresh. Flipped off: turn the hotspot off. */
         if (en && g_lastEnabled != 1) {
             g_hsTries = 0;
             g_hsNextTry = 0;
@@ -696,7 +911,7 @@ static void reconcile(void)
         }
         g_lastEnabled = en;
 
-        NSString *control = en ? controlHotspot(&up, &lan) : nil;
+        NSString *control = en ? controlHotspot(&up, &lan, air) : nil;
         if (en && !lan.ok)
             lan = findIf(1);
 
@@ -717,7 +932,19 @@ static void reconcile(void)
         if (!en || !up.ok || !lan.ok) {
             teardown();
             writeVpnIf("");
-            state = !en ? @"off" : (!up.ok ? @"nowifi" : (hotspotState() == MIS_ON ? @"ready" : @"nohotspot"));
+            if (!en)
+                state = @"off";
+            else if (air == 1)
+                state = @"airplane";
+            else if (!up.ok)
+                state = @"nowifi";
+            else if (hotspotState() == MIS_ON || time(NULL) < g_usbRestartUntil) {
+                NSString *wait = usbWait();
+                state = wait ? @"waitcomputer" : @"ready";
+                if (wait)
+                    control = wait;
+            } else
+                state = @"nohotspot";
             if (control)
                 detail = control;
         } else {
@@ -788,7 +1015,7 @@ static void reconcile(void)
             if (ok && g_applied && !pfn_filter_hook_present()) {
                 static char lastHookErr[256];
                 char herr[256] = "";
-                if (pfn_filter_hook_add(herr, sizeof(herr)) != 0 && strcmp(herr, lastHookErr) != 0) {
+                if (pfn_filter_hook_add(lan.name, lan.ip, lan.mask, herr, sizeof(herr)) != 0 && strcmp(herr, lastHookErr) != 0) {
                     NSLog(@"wifitetherd: %s", herr);
                     strlcpy(lastHookErr, herr, sizeof(lastHookErr));
                 }
@@ -806,6 +1033,8 @@ static void reconcile(void)
             }
         }
 
+        if (lan.ok || !en)
+            g_usbWaitStart = 0;
         if (control && [state isEqualToString:@"active"] && !detail.length)
             detail = control;
         st[@"state"] = state;

@@ -26,7 +26,7 @@ int  pfn_apply(const struct pfn_cfg *cfg, char *err, size_t errlen);
 int  pfn_clear(const char *anchor, char *err, size_t errlen);
 int  pfn_present(const char *anchor);
 int  pfn_filter_hook_present(void);
-int  pfn_filter_hook_add(char *err, size_t errlen);
+int  pfn_filter_hook_add(const char *lan_if, in_addr_t lan_ip, in_addr_t lan_mask, char *err, size_t errlen);
 void pfn_filter_hook_remove(void);
 int  pfn_vpn_shared(void);
 

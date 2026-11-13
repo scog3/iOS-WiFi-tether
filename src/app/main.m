@@ -114,7 +114,8 @@
                 @"3. Plug the iPhone into the computer with a USB cable.\n\n"
                 @"The computer gets internet through this iPhone's Wi-Fi, or through its VPN when one is connected. "
                 @"Leave the switch on and it stays ready, even after re-jailbreaking. "
-                @"Switch it off to turn Personal Hotspot off; the background services then sleep and use no battery.\n\n"
+                @"Switch it off to turn Personal Hotspot off; the background services then sleep and use no battery. "
+                @"If airplane mode is on, switching on turns it off, and switching off turns it back on.\n\n"
                 @"Needs the Share tweak. Opening the Personal Hotspot settings page can disconnect Wi-Fi; WiFi Tether reconnects it.";
 
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
@@ -223,6 +224,10 @@
     } else if ([state isEqualToString:@"nowifi"]) {
         [self showState:@"Waiting for Wi-Fi" color:UIColor.systemOrangeColor];
         _detail.text = @"Connect this iPhone to a Wi-Fi network.";
+    } else if ([state isEqualToString:@"airplane"]) {
+        [self showState:@"Airplane mode is on" color:UIColor.systemOrangeColor];
+    } else if ([state isEqualToString:@"waitcomputer"]) {
+        [self showState:@"Waiting for the computer" color:UIColor.systemBlueColor];
     } else if ([state isEqualToString:@"ready"]) {
         [self showState:@"Ready: plug in the USB cable" color:UIColor.systemBlueColor];
     } else if ([state isEqualToString:@"nohotspot"]) {

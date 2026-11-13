@@ -48,6 +48,8 @@ to turn Personal Hotspot off; the background services then sleep and use no batt
 | --- | --- |
 | 🟢 Sharing Wi-Fi over USB | Working |
 | 🔵 Ready: plug in the USB cable | Personal Hotspot is on; plug in |
+| 🔵 Waiting for the computer | Plugged in, the computer is setting up the connection; retried automatically |
+| 🟠 Airplane mode is on | Personal Hotspot can't run in airplane mode; turn it off |
 | 🟠 Starting Personal Hotspot | Turning the hotspot on; see the message underneath if it stays |
 | 🟠 Waiting for Wi-Fi | Connect the iPhone to a Wi-Fi network |
 | 🔴 Couldn't set up sharing | See the message underneath, and the log below |
@@ -79,6 +81,13 @@ This part is based on [pftun](https://github.com/maliv2/ios-hotspot-vpn-keepaliv
 by Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
 
 ## Troubleshooting
+
+- **"Waiting for the computer" for a long time.** The first time on a new USB port,
+  Windows can miss the connection. WiFi Tether restarts the hotspot to make it try
+  again; if that doesn't help, unplug and plug back in. A "Trust This Computer" prompt
+  may flash up during this and disappear by itself.
+- **Airplane mode.** Personal Hotspot can't run in airplane mode. Switching WiFi Tether
+  on turns airplane mode off and switching it off turns it back on.
 
 - **Personal Hotspot won't turn on by itself.** Turn it on in Settings once. Opening
   that page can disconnect Wi-Fi; WiFi Tether reconnects it within a few seconds.
@@ -121,6 +130,14 @@ address but has no route to the internet. WiFi Tether's background service
    visible over Wi-Fi (WiFiKit's discovery state), because that takes over the Wi-Fi
    chip and disconnects Wi-Fi. If Wi-Fi drops while the hotspot is on, it hides the
    hotspot and turns Wi-Fi back on (MobileWiFi `WiFiManagerClientSetPower`).
+   Airplane mode is switched with RadiosPreferences (AppSupport), as Control Center does.
+   Whether a computer is plugged in comes from IOKit's external power adapter details
+   (USB host family codes).
+5. **Fast reconnects.** Rules in the main filter ruleset record every new TCP
+   connection from the computer, and answer packets of connections with no record
+   (dropped because the route changed) with a TCP reset, so the computer reconnects at
+   once instead of retrying for about a minute.
+
    While the switch is off, `wifitetherd` and the VPN helper wait for the notification
    `com.wifitether.changed` instead of checking every second.
 

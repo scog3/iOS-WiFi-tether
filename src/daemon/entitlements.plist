@@ -15,5 +15,10 @@
     <true/>
     <key>com.apple.private.corewifi.internal</key>
     <true/>
+    <!-- Airplane mode (RadiosPreferences writes com.apple.radios.plist) -->
+    <key>com.apple.SystemConfiguration.SCPreferences-write-access</key>
+    <array>
+        <string>com.apple.radios.plist</string>
+    </array>
 </dict>
 </plist>
