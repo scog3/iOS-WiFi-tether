@@ -1,0 +1,127 @@
+name: Add old releases
+
+# Run once by hand (Actions -> Add old releases -> Run workflow).
+# Publishes a release for every old version, with its notes from CHANGELOG.md:
+#  - the .deb comes from the old-debs/ folder if it's there (the real file you
+#    installed), otherwise it's rebuilt from the last commit of that version in
+#    the repository's history (found through the VERSION file);
+#  - that commit's source is attached as WiFiTether-<version>-source.zip.
+#    (Releases are tagged on the current commit: GitHub doesn't let a workflow
+#    tag old commits whose workflow files differ from today's.)
+# Versions that already have a release are skipped. At the end the current
+# version's release is rebuilt so it stays the newest and is marked latest.
+# Afterwards you can delete the old-debs/ folder.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  history:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld dpkg git curl
+          if ! sudo apt-get install -y -qq ldid; then
+            sudo curl -fsSL -o /usr/local/bin/ldid \
+              https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64
+            sudo chmod +x /usr/local/bin/ldid
+          fi
+
+      - name: Build and publish old versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e   # one version failing shouldn't stop the others
+          CHANGELOG="$PWD/CHANGELOG.md"
+          CURRENT="$(tr -d '[:space:]' < VERSION)"
+
+          notes() {   # $1 = version -> notes.md
+            awk -v v="$1" '
+              /^## / { if (found) exit; if ($2 == v) { found = 1; next } }
+              found { print }
+            ' "$CHANGELOG" > "$RUNNER_TEMP/notes.md"
+            [ -s "$RUNNER_TEMP/notes.md" ] || echo "No changelog entry for $1." > "$RUNNER_TEMP/notes.md"
+            printf '\nInstall: open this page in Safari on the iPhone, tap the .deb, then open it in Filza or Sileo.\n' >> "$RUNNER_TEMP/notes.md"
+          }
+
+          # Last commit of each version, in the order the versions first appeared.
+          declare -A last
+          order=()
+          for c in $(git rev-list --first-parent --reverse HEAD); do
+            v="$(git show "$c:VERSION" 2>/dev/null | tr -d '[:space:]')" || continue
+            [ -n "$v" ] || continue
+            [ -n "${last[$v]:-}" ] || order+=("$v")
+            last[$v]="$c"
+          done
+          # Versions that only exist as uploaded .debs.
+          shopt -s nullglob
+          for f in old-debs/*.deb; do
+            v="$(basename "$f" | sed -n 's/^[^_]*_\([^_]*\)_.*\.deb$/\1/p')"
+            [ -n "$v" ] && [ -z "${last[$v]:-}" ] && { order+=("$v"); last[$v]=""; }
+          done
+          mapfile -t order < <(printf '%s\n' "${order[@]}" | sort -uV)
+          echo "Versions found: ${order[*]}"
+
+          built=()
+          for v in "${order[@]}"; do
+            [ "$v" = "$CURRENT" ] && continue
+            [ "$v" = "0.5.0" ] && continue   # withdrawn
+            c="${last[$v]}"
+            if gh release view "v$v" >/dev/null 2>&1; then
+              echo "== $v: already released, skipping"; continue
+            fi
+            debs=(old-debs/*_"$v"_*.deb)
+            if [ ${#debs[@]} -gt 0 ]; then
+              echo "== $v: using uploaded ${debs[0]}"
+              deb="${debs[0]}"
+            elif [ -n "$c" ]; then
+              echo "== $v: no uploaded .deb, building commit $c"
+              dir="$RUNNER_TEMP/build-$v"
+              git worktree add --detach "$dir" "$c" >/dev/null
+              if [ ! -f "$dir/build-linux.sh" ]; then
+                echo "   no build-linux.sh in that commit, skipping"; continue
+              fi
+              if ! (cd "$dir" && TOOLS="$RUNNER_TEMP/tools" bash build-linux.sh > "$RUNNER_TEMP/build-$v.log" 2>&1); then
+                echo "   build FAILED, skipping; last lines:"; tail -15 "$RUNNER_TEMP/build-$v.log"; continue
+              fi
+              deb="$(ls "$dir"/build/*.deb | head -1)"
+            else
+              echo "== $v: nothing to publish, skipping"; continue
+            fi
+            notes "$v"
+            files=("$deb")
+            if [ -n "$c" ]; then
+              src="$RUNNER_TEMP/WiFiTether-$v-source.zip"
+              git archive --format=zip --prefix="WiFiTether-$v/" -o "$src" "$c" && files+=("$src")
+              printf "\nThis version's source code: **WiFiTether-$v-source.zip** below. (GitHub's own *Source code* downloads are the latest code.)\n" >> "$RUNNER_TEMP/notes.md"
+            else
+              printf "\n_This version's source code isn't in the repository's history._\n" >> "$RUNNER_TEMP/notes.md"
+            fi
+            extra=()
+            if gh release create "v$v" "${files[@]}" \
+                 --target "$GITHUB_SHA" --title "WiFi Tether $v" \
+                 --notes-file "$RUNNER_TEMP/notes.md" --latest=false "${extra[@]}"; then
+              built+=("$v")
+            else
+              echo "   couldn't create the release for $v"
+            fi
+          done
+          echo "Released: ${built[*]:-none}"
+
+          # Rebuild the current version last, so it's the newest release and latest.
+          echo "== $CURRENT (current): rebuilding"
+          bash build-linux.sh > "$RUNNER_TEMP/build-current.log" 2>&1 || { tail -30 "$RUNNER_TEMP/build-current.log"; exit 1; }
+          notes "$CURRENT"
+          gh release delete "v$CURRENT" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "v$CURRENT" build/*.deb --target "$GITHUB_SHA" \
+            --title "WiFi Tether $CURRENT" --notes-file "$RUNNER_TEMP/notes.md" --latest
