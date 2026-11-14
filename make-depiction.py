@@ -23,7 +23,7 @@ details = (
     "1. Connect the iPhone to Wi-Fi.\n"
     "2. Open **WiFi Tether** and turn the switch on.\n"
     "3. Plug the iPhone into the computer.\n\n"
-    "Needs the **Share** tweak (installing WiFi Tether adds its repo). "
+    "Needs the **Share** tweak: the app has a button that adds its repo in Sileo. "
     "Rootless jailbreaks, iOS 15 and later.\n\n"
     "[Source code on GitHub](https://github.com/scog3/iOS-WiFi-tether)"
 )

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.7
+
+- **Add Share's Repo in Sileo** button: opens Sileo with Share's repo address filled
+  in, every time. Tap **Add Dist Repo**, then **Add**; the app's instructions now say so.
+  (Sileo's *Add Source* runs an online check first that can drop the repo silently.)
+- The installer no longer adds Share's repo to Sileo's list. Sileo could overwrite the
+  change, so the repo sometimes never appeared and the button then said Share
+  couldn't be found.
+
 ## 0.4.6
 
 - Fixes the app squeezing everything into a narrow column on iPhones (from 0.4.4's

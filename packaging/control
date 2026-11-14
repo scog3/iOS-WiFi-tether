@@ -11,4 +11,4 @@ Homepage: https://github.com/scog3/iOS-WiFi-tether
 Icon: https://scog3.github.io/iOS-WiFi-tether/icon.png
 SileoDepiction: https://scog3.github.io/iOS-WiFi-tether/depiction.json
 Depiction: https://scog3.github.io/iOS-WiFi-tether/depiction.html
-Description: Share the iPhone's Wi-Fi connection with a computer over USB, through the iPhone's VPN when one is connected. One switch turns Personal Hotspot on and keeps Wi-Fi connected. Needs Personal Hotspot to be available (for example with the Share tweak). Installing it adds the Share tweak's repo (aminerostane.com/repo) to Sileo if it isn't there. python3 is only used to restart a VPN that iOS stopped.
+Description: Share the iPhone's Wi-Fi connection with a computer over USB, through the iPhone's VPN when one is connected. One switch turns Personal Hotspot on and keeps Wi-Fi connected. Needs Personal Hotspot to be available (for example with the Share tweak). The app has a button that adds Share's repo (aminerostane.com/repo) in Sileo. python3 is only used to restart a VPN that iOS stopped.

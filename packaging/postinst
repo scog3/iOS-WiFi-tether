@@ -7,25 +7,18 @@ chown 501:501 /var/mobile/Library/WiFiTether
 
 uicache -p /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
 
-# WiFi Tether needs the Share tweak: add its repo if it isn't there yet (said in
-# the package description). It goes into Sileo's own list when Sileo is installed,
-# so it shows up and can be removed in Sileo like any repo you added; otherwise
-# into a file of its own. Left in place on uninstall.
+# WiFi Tether needs the Share tweak. With Sileo, the app's "Add Share's Repo in
+# Sileo" button adds Share's repo through Sileo itself; the installer doesn't touch
+# Sileo's list (Sileo rewrites it from memory while it installs, losing changes).
+# Without Sileo, add the repo as a file of its own if it isn't there yet.
 SRC=/var/jb/etc/apt/sources.list.d
-SILEO="$SRC/sileo.sources"
-OLD="$SRC/share-aminerostane.sources"   # where 0.4.3 and 0.4.4 put it
-rm -f "$OLD"
-if ! grep -rqs "aminerostane.com/repo" "$SRC" /var/jb/etc/apt/sources.list; then
+OWN="$SRC/share-aminerostane.sources"
+if [ -d /var/jb/Applications/Sileo.app ] || [ -f "$SRC/sileo.sources" ]; then
+    rm -f "$OWN"   # left by 0.4.3 and 0.4.4; Sileo can't manage it
+elif ! grep -rqs "aminerostane.com/repo" "$SRC" /var/jb/etc/apt/sources.list; then
     mkdir -p "$SRC"
-    if [ -f "$SILEO" ]; then
-        # make sure the new entry starts after a blank line
-        [ -s "$SILEO" ] && [ -n "$(tail -c 1 "$SILEO")" ] && echo >> "$SILEO"
-        [ -s "$SILEO" ] && echo >> "$SILEO"
-        printf 'Types: deb\nURIs: https://aminerostane.com/repo/\nSuites: ./\nComponents: \n' >> "$SILEO"
-    else
-        printf 'Types: deb\nURIs: https://aminerostane.com/repo/\nSuites: ./\nComponents:\n' > "$OLD"
-    fi
-    echo "Added the Share tweak's repo (aminerostane.com/repo). Refresh Sileo, then install Share."
+    printf 'Types: deb\nURIs: https://aminerostane.com/repo/\nSuites: ./\nComponents:\n' > "$OWN"
+    echo "Added the Share tweak's repo (aminerostane.com/repo)."
 fi
 
 # The upstream VPN tool (com.mali.pftun) does the same job; two copies would fight.

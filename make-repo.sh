@@ -47,7 +47,7 @@ code{background:#f0f0f0;padding:2px 5px;border-radius:4px}</style></head><body>
 <p>Share a jailbroken iPhone's Wi-Fi over USB. Rootless jailbreaks, iOS 15 and later.</p>
 <p><a class="b" id="add" href="#">Add to Sileo</a></p>
 <p>Or add this source in Sileo by hand: <code id="url"></code></p>
-<p>Installing WiFi Tether also adds the repo for the <a href="https://github.com/amineross/share">Share</a> tweak, which it needs; install Share from Sileo afterwards.</p>
+<p>WiFi Tether needs the <a href="https://github.com/amineross/share">Share</a> tweak: open the WiFi Tether app and tap <b>Add Share's Repo in Sileo</b>, or add <code>https://aminerostane.com/repo</code> in Sileo yourself. If Sileo's <b>Add Source</b> doesn't add a repo, tap <b>Add Dist Repo</b> instead, then <b>Add</b>.</p>
 <p><a href="https://github.com/scog3/iOS-WiFi-tether">Source code and releases on GitHub</a></p>
 <script>var u=location.href.replace(/index\.html$/,'');if(!u.endsWith('/'))u+='/';
 document.getElementById('url').textContent=u;document.getElementById('add').href='sileo://source/'+u;</script>

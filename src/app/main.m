@@ -117,12 +117,24 @@
     UILabel *shareTitle = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
     shareTitle.text = @"Install the Share tweak first";
     UILabel *shareText = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
-    shareText.text = @"WiFi Tether needs Share to turn on Personal Hotspot without a SIM.\n"
-                     @"1. Tap Get Share in Sileo.\n"
-                     @"2. Install Share there.\n"
-                     @"3. Come back here. WiFi Tether picks it up by itself.";
+    NSString *steps = @"WiFi Tether needs Share to turn on Personal Hotspot without a SIM.\n"
+                      @"1. Tap the button below. Sileo opens with Share's repo address filled in.\n"
+                      @"2. Tap Add Dist Repo, then Add (leave the other boxes empty).\n"
+                      @"3. Install Share from that repo.\n"
+                      @"4. Come back here. WiFi Tether picks it up by itself.\n"
+                      @"Repo address: https://aminerostane.com/repo";
+    NSMutableAttributedString *as = [[NSMutableAttributedString alloc] initWithString:steps
+        attributes:@{NSFontAttributeName: shareText.font, NSForegroundColorAttributeName: shareText.textColor}];
+    /* the two Sileo buttons to tap, in bold */
+    NSRange dist = [steps rangeOfString:@"Add Dist Repo"];
+    NSRange add = [steps rangeOfString:@"then Add"];
+    add.location += 5; add.length = 3;
+    for (NSValue *v in @[[NSValue valueWithRange:dist], [NSValue valueWithRange:add]])
+        [as addAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold],
+                            NSForegroundColorAttributeName: UIColor.labelColor} range:v.rangeValue];
+    shareText.attributedText = as;
     UIButton *getShare = [UIButton buttonWithType:UIButtonTypeSystem];
-    [getShare setTitle:@"Get Share in Sileo" forState:UIControlStateNormal];
+    [getShare setTitle:@"Add Share's Repo in Sileo" forState:UIControlStateNormal];
     [getShare setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     getShare.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     getShare.backgroundColor = UIColor.systemBlueColor;
@@ -280,23 +292,18 @@
     _detail.hidden = _detail.text.length == 0;
 }
 
-/* Opens Share's page in Sileo, or Sileo's "add source" screen if Share's repo
- * isn't added yet. Only on a tap: nothing is added behind your back. */
+/* Opens Sileo's "Add Source" box with Share's repo address filled in. Adding it
+ * with Sileo's "Add Dist Repo" button (Suites and Components left empty) works
+ * reliably: plain "Add Source" first asks an online piracy check, which can drop
+ * the repo without a word. Sileo keeps it in its own list, so it can be removed
+ * there like any other repo. Only on a tap: nothing is added behind your back. */
+#define SHARE_REPO @"https://aminerostane.com/repo/"
 - (void)getShare
 {
-    BOOL haveRepo = NO;
-    NSString *dir = @"/var/jb/etc/apt/sources.list.d";
-    for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil]) {
-        NSString *t = [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:f]
-                                                encoding:NSUTF8StringEncoding error:nil];
-        if ([t containsString:@"aminerostane.com/repo"])
-            haveRepo = YES;
-    }
-    NSURL *sileo = [NSURL URLWithString:haveRepo ? @"sileo://package/com.rostane.share"
-                                                 : @"sileo://source/https://aminerostane.com/repo/"];
+    NSURL *sileo = [NSURL URLWithString:[@"sileo://source/" stringByAppendingString:SHARE_REPO]];
     [[UIApplication sharedApplication] openURL:sileo options:@{} completionHandler:^(BOOL ok) {
         if (!ok)   /* no Sileo: show the repo in Safari instead */
-            [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://aminerostane.com/repo/"]
+            [[UIApplication sharedApplication] openURL:[NSURL URLWithString:SHARE_REPO]
                                                options:@{} completionHandler:nil];
     }];
 }
