@@ -170,7 +170,9 @@
         [stack.widthAnchor constraintLessThanOrEqualToConstant:540],
     ]];
     NSLayoutConstraint *fill = [stack.widthAnchor constraintEqualToAnchor:safe.widthAnchor constant:-32];
-    fill.priority = UILayoutPriorityDefaultHigh;   /* gives way to the 540 cap */
+    /* Just below required: beats every label's own sizing (so phones always fill
+     * the width) and loses only to the 540 cap. */
+    fill.priority = UILayoutPriorityRequired - 1;
     fill.active = YES;
 
     [self refresh];

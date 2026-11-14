@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.6
+
+- Fixes the app squeezing everything into a narrow column on iPhones (from 0.4.4's
+  iPad layout change).
+
 ## 0.4.5
 
 - Share's repo is now added to **Sileo's own list**, so it appears and can be removed in
