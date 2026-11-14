@@ -348,26 +348,72 @@ static NSString *ipStr(in_addr_t a)
 #define BOOTPD_PLIST "/Library/Preferences/SystemConfiguration/bootpd.plist"
 #define WT_MARK @"_wifitether"
 
-static void signalBootpd(void)
+/* Process id of a running program by name (first match), or 0. */
+static pid_t pidOf(const char *comm)
 {
     int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
     size_t len = 0;
     struct kinfo_proc *procs;
     size_t n, i;
+    pid_t found = 0;
 
     if (sysctl(mib, 3, NULL, &len, NULL, 0) != 0 || len == 0)
-        return;
+        return 0;
     len += len / 4;
     procs = malloc(len);
     if (!procs)
-        return;
+        return 0;
     if (sysctl(mib, 3, procs, &len, NULL, 0) == 0) {
         n = len / sizeof(struct kinfo_proc);
-        for (i = 0; i < n; i++)
-            if (strcmp(procs[i].kp_proc.p_comm, "bootpd") == 0)
-                kill(procs[i].kp_proc.p_pid, SIGHUP); /* bootpd re-reads its settings */
+        for (i = 0; i < n && !found; i++)
+            if (strcmp(procs[i].kp_proc.p_comm, comm) == 0)
+                found = procs[i].kp_proc.p_pid;
     }
     free(procs);
+    return found;
+}
+
+static void signalBootpd(void)
+{
+    pid_t p = pidOf("bootpd");
+    if (p)
+        kill(p, SIGHUP);   /* bootpd re-reads its settings */
+}
+
+/* ── The Share tweak ──────────────────────────────────────────────
+ * Share patches iOS's hotspot service (misd) so it runs without a SIM.
+ * Without it WiFi Tether can't do anything, so it acts as switched off.
+ * Read from dpkg's database, only when that file changes. */
+#define DPKG_STATUS "/var/jb/var/lib/dpkg/status"
+#define SHARE_PKG   "com.rostane.share"
+
+static int shareInstalled(void)
+{
+    static time_t mtime;
+    static off_t size;
+    static int cached = -1;
+    struct stat st;
+    NSString *db;
+    NSRange r;
+
+    if (stat(DPKG_STATUS, &st) != 0)
+        return cached < 0 ? 1 : cached;   /* can't tell: don't block */
+    if (cached >= 0 && st.st_mtime == mtime && st.st_size == size)
+        return cached;
+    mtime = st.st_mtime;
+    size = st.st_size;
+    db = [NSString stringWithContentsOfFile:@DPKG_STATUS encoding:NSUTF8StringEncoding error:nil];
+    if (!db)
+        return cached < 0 ? 1 : cached;
+    cached = 0;
+    r = [db rangeOfString:@"Package: " SHARE_PKG "\n"];
+    if (r.location != NSNotFound) {
+        NSUInteger start = r.location;
+        NSRange end = [db rangeOfString:@"\n\n" options:0 range:NSMakeRange(start, db.length - start)];
+        NSString *stanza = [db substringWithRange:NSMakeRange(start, (end.location == NSNotFound ? db.length : end.location) - start)];
+        cached = [stanza containsString:@"Status: install ok installed"];
+    }
+    return cached;
 }
 
 /* Rewrites bootpd.plist through `edit`; returns 1 if the file changed. */
@@ -495,6 +541,7 @@ static void dhcpRestore(void)
 
 static int   g_hsInit;            /* 0 not tried, 1 ok, -1 failed */
 static int   g_hsCrashed;         /* a hotspot call crashed the service last time */
+static pid_t g_misdPid;           /* the hotspot service we're connected to */
 
 /* Crash guard: Apple's hotspot code is loaded into this service, which is new on
  * some iOS versions. If a call crashes, launchd restarts us and the marker is
@@ -549,6 +596,7 @@ static int hsInit(void)
     if (!g_mis)
         return 0;
     g_hsInit = 1;
+    g_misdPid = pidOf("misd");
     return 1;
 }
 
@@ -854,7 +902,32 @@ static void reconcile(void)
     @autoreleasepool {
         NSMutableDictionary *st = [NSMutableDictionary dictionary];
         NSString *state, *detail = @"";
-        int en = isEnabled();
+        int share = shareInstalled();
+        static int lastShare = -1;
+
+        /* Share just got installed: restart iOS's hotspot service so Share's
+         * patch loads (the hotspot can't be running without Share anyway). */
+        if (share && lastShare == 0) {
+            pid_t m = pidOf("misd");
+            NSLog(@"wifitetherd: Share installed; restarting the hotspot service so it loads");
+            if (m)
+                kill(m, SIGTERM);
+        }
+        lastShare = share;
+
+        /* The hotspot service restarted (Share installed or updated, a crash...):
+         * our connection to it is dead, so restart ourselves to reconnect. */
+        if (g_hsInit > 0 && g_misdPid) {
+            pid_t m = pidOf("misd");
+            if (m && m != g_misdPid) {
+                NSLog(@"wifitetherd: the hotspot service restarted (%d -> %d); restarting to reconnect",
+                      (int)g_misdPid, (int)m);
+                teardown();
+                exit(0);   /* launchd starts us again */
+            }
+        }
+
+        int en = isEnabled() && share;   /* without Share: act as switched off */
         WTIf up = findIf(0), lan = findIf(1);
 
         trimLog(WT_DIR "/daemon.log");
@@ -916,6 +989,7 @@ static void reconcile(void)
             lan = findIf(1);
 
         st[@"enabled"] = @(en);
+        st[@"share"] = @(share);
         st[@"wifi"] = up.ok ? ipStr(up.ip) : @"";
         st[@"hotspot"] = lan.ok ? [NSString stringWithFormat:@"%@ on %s", ipStr(lan.ip), lan.name] : @"";
 
@@ -933,7 +1007,7 @@ static void reconcile(void)
             teardown();
             writeVpnIf("");
             if (!en)
-                state = @"off";
+                state = share ? @"off" : @"noshare";
             else if (air == 1)
                 state = @"airplane";
             else if (!up.ok)

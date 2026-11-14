@@ -24,6 +24,7 @@
     UILabel  *_usb;
     UILabel  *_dns;
     UILabel  *_vpn;
+    UIView   *_shareCard;   /* shown while the Share tweak isn't installed */
     NSTimer  *_timer;
     unsigned  _ticks;
 }
@@ -112,8 +113,28 @@
                 @"If airplane mode is on, switching on turns it off, and switching off turns it back on.\n\n"
                 @"Needs the Share tweak.";
 
+    /* Share tweak missing: say so first, with a button that opens Sileo. */
+    UILabel *shareTitle = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
+    shareTitle.text = @"Install the Share tweak first";
+    UILabel *shareText = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
+    shareText.text = @"WiFi Tether needs Share to turn on Personal Hotspot without a SIM.\n"
+                     @"1. Tap Get Share in Sileo.\n"
+                     @"2. Install Share there.\n"
+                     @"3. Come back here. WiFi Tether picks it up by itself.";
+    UIButton *getShare = [UIButton buttonWithType:UIButtonTypeSystem];
+    [getShare setTitle:@"Get Share in Sileo" forState:UIControlStateNormal];
+    [getShare setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    getShare.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    getShare.backgroundColor = UIColor.systemBlueColor;
+    getShare.layer.cornerRadius = 10;
+    [getShare.heightAnchor constraintEqualToConstant:44].active = YES;
+    [getShare addTarget:self action:@selector(getShare) forControlEvents:UIControlEventTouchUpInside];
+    _shareCard = [self card:@[shareTitle, shareText, getShare]];
+    _shareCard.hidden = YES;
+
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
         title, subtitle,
+        _shareCard,
         [self card:@[toggleRow]],
         [self card:@[stateRow, _detail,
                      [self row:@"Wi-Fi" value:_wifi],
@@ -141,9 +162,16 @@
         [scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:24],
         [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],
-        [stack.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],
-        [stack.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],
+        /* Phones: full width with 16-point margins. iPads and other wide
+         * screens: at most 540 points wide, centred, like a phone layout. */
+        [stack.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
+        [stack.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:16],
+        [stack.trailingAnchor constraintLessThanOrEqualToAnchor:safe.trailingAnchor constant:-16],
+        [stack.widthAnchor constraintLessThanOrEqualToConstant:540],
     ]];
+    NSLayoutConstraint *fill = [stack.widthAnchor constraintEqualToAnchor:safe.widthAnchor constant:-32];
+    fill.priority = UILayoutPriorityDefaultHigh;   /* gives way to the 540 cap */
+    fill.active = YES;
 
     [self refresh];
 }
@@ -201,6 +229,17 @@
     _detail.text = @"";
     _detail.hidden = YES;
 
+    /* Without Share nothing works: show how to get it and grey out the switch. */
+    BOOL noShare = fresh && st[@"share"] && ![st[@"share"] boolValue];
+    _shareCard.hidden = !noShare;
+    _toggle.enabled = !noShare;
+    if (noShare) {
+        [self showState:@"Share tweak needed" color:UIColor.systemOrangeColor];
+        _detail.text = @"Install Share from Sileo to use WiFi Tether.";
+        _detail.hidden = NO;
+        return;
+    }
+
     if (!fresh) {
         [self showState:@"Background service isn't running" color:UIColor.systemRedColor];
         _detail.text = @"Try rebooting and re-jailbreaking, or reinstall the package.";
@@ -237,6 +276,27 @@
     if (detail.length)
         _detail.text = _detail.text.length ? [_detail.text stringByAppendingFormat:@"\n%@", detail] : detail;
     _detail.hidden = _detail.text.length == 0;
+}
+
+/* Opens Share's page in Sileo, or Sileo's "add source" screen if Share's repo
+ * isn't added yet. Only on a tap: nothing is added behind your back. */
+- (void)getShare
+{
+    BOOL haveRepo = NO;
+    NSString *dir = @"/var/jb/etc/apt/sources.list.d";
+    for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil]) {
+        NSString *t = [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:f]
+                                                encoding:NSUTF8StringEncoding error:nil];
+        if ([t containsString:@"aminerostane.com/repo"])
+            haveRepo = YES;
+    }
+    NSURL *sileo = [NSURL URLWithString:haveRepo ? @"sileo://package/com.rostane.share"
+                                                 : @"sileo://source/https://aminerostane.com/repo/"];
+    [[UIApplication sharedApplication] openURL:sileo options:@{} completionHandler:^(BOOL ok) {
+        if (!ok)   /* no Sileo: show the repo in Safari instead */
+            [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://aminerostane.com/repo/"]
+                                               options:@{} completionHandler:nil];
+    }];
 }
 
 - (void)toggled:(UISwitch *)sender

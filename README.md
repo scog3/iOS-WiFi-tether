@@ -33,7 +33,8 @@ It's a free alternative to paid tweaks such as Tethera and TetherMe.
 1. In Sileo, add the source `https://scog3.github.io/iOS-WiFi-tether/`
    (or open that page on the iPhone and tap **Add to Sileo**).
 2. Install **WiFi Tether**. It also adds the repo for the Share tweak, which it needs.
-3. Refresh Sileo, install **Share**, and respring.
+3. Install **Share**: open WiFi Tether and tap **Get Share in Sileo**, or find it in
+   Sileo. WiFi Tether won't work without it and picks it up as soon as it's installed.
 
 Updates then appear in Sileo automatically.
 

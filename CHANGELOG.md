@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.4
+
+- **Share is required.** Without the Share tweak WiFi Tether now does nothing: the switch
+  is greyed out and the app explains what's missing, with a **Get Share in Sileo**
+  button.
+- Fixes Personal Hotspot not turning on when WiFi Tether was installed before Share.
+  When Share is installed WiFi Tether restarts iOS's hotspot service so Share loads, and
+  whenever that service restarts WiFi Tether reconnects to it.
+- On iPads and other wide screens the app keeps a phone-width layout, centred.
+- Every build has its own package version, so Sileo never gets two different files with
+  the same version.
+
 ## 0.4.3
 
 - **Install and update from Sileo.** WiFi Tether now has its own repo:

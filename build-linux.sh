@@ -5,6 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
+# Package version: VERSION, plus a build number on GitHub (0.4.4-37), so every build
+# is a new version to Sileo. The app itself shows plain VERSION.
+PKGVERSION="${PKG_VERSION:-$VERSION}"
 B=build
 T="${TOOLS:-$HOME/ios-build-tools}"
 rm -rf "$B"
@@ -86,7 +89,7 @@ ldid -Ssrc/app/entitlements.plist "$APP/WiFiTether"
 ldid -Ssrc/daemon/entitlements.plist "$S/var/jb/usr/libexec/wifitetherd"
 ldid -Ssrc/daemon/entitlements.plist "$S/var/jb/usr/libexec/wifitether-vpn"
 
-sed "s/@VERSION@/$VERSION/g" packaging/control > "$S/DEBIAN/control"
+sed "s/@VERSION@/$PKGVERSION/g" packaging/control > "$S/DEBIAN/control"
 cp packaging/postinst packaging/prerm "$S/DEBIAN/"
 
 chmod 755 "$S/DEBIAN/postinst" "$S/DEBIAN/prerm" "$APP/WiFiTether" "$S/var/jb/usr/libexec/wifitetherd" \
@@ -94,6 +97,6 @@ chmod 755 "$S/DEBIAN/postinst" "$S/DEBIAN/prerm" "$APP/WiFiTether" "$S/var/jb/us
 chmod 644 "$S/var/jb/Library/LaunchDaemons/"*.plist "$APP/Info.plist" "$S/DEBIAN/control" \
     "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.pftun" "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.AutoHotspot"
 
-OUT="$B/com.wifitether_${VERSION}_iphoneos-arm64.deb"
+OUT="$B/com.wifitether_${PKGVERSION}_iphoneos-arm64.deb"
 dpkg-deb --root-owner-group -Zgzip -b "$S" "$OUT"
 echo "== Built $OUT"
