@@ -7,12 +7,24 @@ chown 501:501 /var/mobile/Library/WiFiTether
 
 uicache -p /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
 
-# WiFi Tether needs the Share tweak: add its repo to Sileo if it isn't there yet
-# (said in the package description). Left in place on uninstall.
+# WiFi Tether needs the Share tweak: add its repo if it isn't there yet (said in
+# the package description). It goes into Sileo's own list when Sileo is installed,
+# so it shows up and can be removed in Sileo like any repo you added; otherwise
+# into a file of its own. Left in place on uninstall.
 SRC=/var/jb/etc/apt/sources.list.d
+SILEO="$SRC/sileo.sources"
+OLD="$SRC/share-aminerostane.sources"   # where 0.4.3 and 0.4.4 put it
+rm -f "$OLD"
 if ! grep -rqs "aminerostane.com/repo" "$SRC" /var/jb/etc/apt/sources.list; then
     mkdir -p "$SRC"
-    printf 'Types: deb\nURIs: https://aminerostane.com/repo/\nSuites: ./\nComponents:\n' > "$SRC/share-aminerostane.sources"
+    if [ -f "$SILEO" ]; then
+        # make sure the new entry starts after a blank line
+        [ -s "$SILEO" ] && [ -n "$(tail -c 1 "$SILEO")" ] && echo >> "$SILEO"
+        [ -s "$SILEO" ] && echo >> "$SILEO"
+        printf 'Types: deb\nURIs: https://aminerostane.com/repo/\nSuites: ./\nComponents: \n' >> "$SILEO"
+    else
+        printf 'Types: deb\nURIs: https://aminerostane.com/repo/\nSuites: ./\nComponents:\n' > "$OLD"
+    fi
     echo "Added the Share tweak's repo (aminerostane.com/repo). Refresh Sileo, then install Share."
 fi
 

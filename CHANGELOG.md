@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5
+
+- Share's repo is now added to **Sileo's own list**, so it appears and can be removed in
+  Sileo like any repo you added yourself. The separate file 0.4.3 and 0.4.4 used is
+  moved over automatically.
+
 ## 0.4.4
 
 - **Share is required.** Without the Share tweak WiFi Tether now does nothing: the switch
