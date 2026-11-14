@@ -6,6 +6,8 @@
   `https://scog3.github.io/iOS-WiFi-tether/`. Updates show up in Sileo like any tweak.
 - Installing WiFi Tether adds the Share tweak's repo to Sileo if it isn't there yet, and
   Sileo offers Share alongside it.
+- WiFi Tether's page in Sileo has a **Changelog** tab, and other package managers show
+  the changelog as a web page.
 
 ## 0.4.2
 

@@ -13,7 +13,10 @@ cp "$@" "$R/debs/"
 cp src/app/icons/AppIcon60x60@2x.png "$R/CydiaIcon.png"   # repo icon in Sileo
 cp src/app/icons/AppIcon60x60@3x.png "$R/icon.png"        # package icon
 
+python3 make-depiction.py "$R/depiction.json"           # Sileo's package page
+
 (cd "$R" && dpkg-scanpackages -m debs /dev/null > Packages 2>/dev/null)
+sed -i 's/^Sileodepiction:/SileoDepiction:/' "$R/Packages"   # dpkg-scanpackages changes the case
 gzip -9 -k -n "$R/Packages"
 bzip2 -9 -k "$R/Packages"
 
