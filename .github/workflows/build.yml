@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bash build-linux.sh 2>&1 | tee build.log
+          PKG_VERSION="$(tr -d '[:space:]' < VERSION)-${GITHUB_RUN_NUMBER}" bash build-linux.sh 2>&1 | tee build.log
 
       - name: Release notes from CHANGELOG.md
         shell: bash
@@ -62,6 +62,10 @@ jobs:
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           if gh release view "$TAG" >/dev/null 2>&1; then
             # Same version built again: replace its .deb and notes, keep the release.
+            # Replace the .deb (its name has the build number, so remove the old ones first)
+            gh release view "$TAG" --json assets -q '.assets[].name' | grep '\.deb$' | while read -r a; do
+              gh release delete-asset "$TAG" "$a" --yes
+            done
             gh release upload "$TAG" build/*.deb --clobber
             gh release edit "$TAG" --notes-file notes.md --latest
           else
