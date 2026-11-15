@@ -932,7 +932,7 @@ static struct {
     CFStringRef  (*copyPassword)(void *);
     void         (*setPassword)(void *, CFStringRef);
     void         (*setPower)(void *, bool);
-    CFDictionaryRef (*blacklist)(void *, CFDictionaryRef);   /* BSS blacklist command -> response */
+    CFTypeRef    (*blacklist)(void *, CFDictionaryRef, CFDictionaryRef *);   /* BSS blacklist command */
     CFDictionaryRef (*copyRecord)(void *);
     void         (*setProp)(void *, CFStringRef, CFTypeRef);
 } B5;
@@ -1067,22 +1067,51 @@ static NSDictionary *b5PlistOnly(NSDictionary *rec)
 
 /* One BSS blacklist command to iOS's Wi-Fi service. The answer lists every
  * blocked radio (keys networks, reasons, timestamps, reasonData). */
+/* Writes the first bytes of an iOS function's machine code to the log, once,
+ * so its exact calling convention can be read off if a call goes wrong. */
+static void b5LogCode(const char *name, const void *fn)
+{
+    const unsigned char *p = fn;
+    if (!p)
+        return;
+    NSLog(@"wifitetherd: 5 GHz: code of %s at %p", name, fn);
+    for (int off = 0; off < 640; off += 32) {
+        NSMutableString *line = [NSMutableString stringWithCapacity:64];
+        for (int i = 0; i < 32; i++)
+            [line appendFormat:@"%02x", p[off + i]];
+        NSLog(@"wifitetherd: 5 GHz: code +%03x %@", off, line);
+    }
+}
+
+/* Two-argument call (device, request) crashed in 0.4.13: the answer comes back
+ * through a third, out argument. Called as (device, request, &answer); if it
+ * returns the answer instead, that's picked up too. */
 static NSDictionary *b5BlacklistCommand(NSString *command, NSDictionary *record)
 {
     NSMutableDictionary *req = [NSMutableDictionary dictionaryWithObject:command forKey:@"command"];
-    CFDictionaryRef r;
+    CFDictionaryRef out = NULL;
+    CFTypeRef r;
+    static int dumped;
 
     if (record)
         req[@"network"] = record;
     if ([command isEqualToString:@"kBssBlacklistSet"])
         req[@"reason"] = @8L;   /* the one reason wifid accepts for this command */
+    if (!dumped++)
+        b5LogCode("WiFiDeviceClientBssBlacklistCommandAndCopyResponse", (const void *)B5.blacklist);
     b5GuardBegin("blacklist");
-    r = B5.blacklist(B5.dev, (__bridge CFDictionaryRef)req);
+    r = B5.blacklist(B5.dev, (__bridge CFDictionaryRef)req, &out);
     b5GuardEnd();
-    /* It returns a copied dictionary; anything that doesn't look like one isn't touched. */
-    if (!r || (uintptr_t)r < 0x100000000ULL || ((uintptr_t)r & 7) || CFGetTypeID(r) != CFDictionaryGetTypeID())
-        return nil;
-    return CFBridgingRelease(r);
+    if (dumped == 1 || !out)
+        NSLog(@"wifitetherd: 5 GHz: %@ returned %p, answer %p", command, r, out);
+    if (out && CFGetTypeID(out) == CFDictionaryGetTypeID())
+        return CFBridgingRelease(out);
+    if (out)
+        CFRelease(out);
+    /* Returned instead: only touched if it looks like an object. */
+    if (r && (uintptr_t)r >= 0x100000000ULL && !((uintptr_t)r & 7) && CFGetTypeID(r) == CFDictionaryGetTypeID())
+        return CFBridgingRelease(r);
+    return nil;
 }
 
 /* Blocks these 2.4 GHz radios (or renews the block). Returns 1 if iOS took them. */
