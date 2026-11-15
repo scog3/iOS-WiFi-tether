@@ -1057,6 +1057,7 @@ static int b5CurrentBand(void)
 
 static void b5JoinNow(void);
 static double g_b5T0;   /* when this try started, for the log */
+static int    g_b5FailStreak;   /* moves in a row that never landed on 5 GHz */
 
 static int b5Ms(void)
 {
@@ -1064,8 +1065,9 @@ static int b5Ms(void)
 }
 
 /* After a join: watch for up to 10 seconds whether the iPhone ends up on
- * 5 GHz. If iOS's own auto-join wins the race back to 2.4 GHz, try again
- * (3 tries per move). */
+ * 5 GHz. If iOS's own auto-join wins the race back to 2.4 GHz, try once more.
+ * Every try drops Wi-Fi for a moment, so a move that doesn't work backs off:
+ * 1, then 5, then 15 minutes. */
 static void b5WatchLanding(int checks)
 {
     int band = b5CurrentBand();
@@ -1077,6 +1079,7 @@ static void b5WatchLanding(int checks)
     if (band >= 5) {
         NSLog(@"wifitetherd: 5 GHz: on 5 GHz (%d ms after disconnecting)", b5Ms());
         g_b5State = @"on5";
+        g_b5FailStreak = 0;
         b5EndMove();
         return;
     }
@@ -1086,19 +1089,35 @@ static void b5WatchLanding(int checks)
         });
         return;
     }
-    if (g_b5JoinTries < 3) {
-        NSLog(@"wifitetherd: 5 GHz: ended up on %s; trying again", band < 0 ? "no Wi-Fi" : "2.4 GHz");
+    if (g_b5JoinTries < 2) {
+        NSLog(@"wifitetherd: 5 GHz: ended up on %s; trying once more", band < 0 ? "no Wi-Fi" : "2.4 GHz");
         b5JoinNow();
         return;
     }
-    NSLog(@"wifitetherd: 5 GHz: ended up on %s 3 times; trying later", band < 0 ? "no Wi-Fi" : "2.4 GHz");
-    g_b5State = @"searching";
-    g_b5NextTry = time(NULL) + 60;
+    {
+        int wait = g_b5FailStreak == 0 ? 60 : g_b5FailStreak == 1 ? 300 : 900;
+        g_b5FailStreak++;
+        NSLog(@"wifitetherd: 5 GHz: ended up on %s again; trying in %d minute(s)",
+              band < 0 ? "no Wi-Fi" : "2.4 GHz", wait / 60);
+        g_b5State = @"notsticking";
+        g_b5NextTry = time(NULL) + wait;
+    }
     b5EndMove();
 }
 
 static void b5Joined(void *dev, void *net, CFDictionaryRef info, void *err, void *ctx)
 {
+    /* What iOS says it joined (for the log): which channel, and its answer. */
+    {
+        int ch = net ? b5Int(net, CFSTR("CHANNEL")) : 0;
+        NSString *answer = info && CFGetTypeID(info) == CFDictionaryGetTypeID()
+            ? [(__bridge NSDictionary *)info description] : @"";
+        answer = [[answer componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]
+                  componentsJoinedByString:@" "];
+        if (answer.length > 600)
+            answer = [answer substringToIndex:600];
+        NSLog(@"wifitetherd: 5 GHz: join answer: channel %d %@", ch, answer);
+    }
     b5GuardEnd();
     if (err) {
         NSLog(@"wifitetherd: 5 GHz: iOS couldn't join the 5 GHz radio (error %p, %d ms)", err, b5Ms());

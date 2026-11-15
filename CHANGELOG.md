@@ -3,9 +3,11 @@
 ## 0.4.12
 
 - **Force 5 GHz** joins 5 GHz only once the disconnect has actually happened. Joining
-  a moment too early was ignored, and iOS went straight back to 2.4 GHz. It then
-  watches for up to 10 seconds whether the iPhone lands on 5 GHz, and tries up to 3
-  times.
+  a moment too early was ignored, and iOS went straight back to 2.4 GHz, so the phone
+  dropped and rejoined Wi-Fi again and again. It then watches for up to 10 seconds
+  whether the iPhone lands on 5 GHz.
+- Fewer Wi-Fi drops when it doesn't work: 2 tries per attempt, then it waits 1, 5 and
+  then 15 minutes before trying again, and says so under the switch.
 - **Force 5 GHz works without the Share tweak**; only USB sharing needs Share.
 - The app is split into **USB tethering** and **5 GHz Wi-Fi** sections, and the
   package is now called **WiFi Tether & Force 5 GHz** in Sileo.

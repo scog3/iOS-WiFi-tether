@@ -331,6 +331,9 @@ static NSString *wifiBand(void)
     else if ([s isEqualToString:@"flapping"])
         text = @"iOS keeps switching back to 2.4 GHz, so this is paused for a few minutes to keep Wi-Fi usable. "
                @"The 5 GHz signal is probably too weak here.";
+    else if ([s isEqualToString:@"notsticking"])
+        text = @"Couldn't get onto 5 GHz: iOS went back to 2.4 GHz. Trying again in a few minutes. "
+               @"Details are in daemon.log.";
     else if ([s isEqualToString:@"failed"])
         text = @"Couldn't move to 5 GHz. Trying again in a couple of minutes; details are in daemon.log.";
     else if ([s isEqualToString:@"nowifi"])
