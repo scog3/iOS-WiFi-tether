@@ -40,6 +40,7 @@ Newest first. The 0.4.18 builds were development builds that led to 1.0.
 
 | Version | What changed | Result |
 | --- | --- | --- |
+| 1.2 | Moves start with the hand-over straight away, with no scan (iOS picks the radio); a scan only for the fallback join. A scan that misses a band seen before on this network no longer counts as "not in range" | iOS often turns down scans while on 5 GHz, which delayed band switches by up to 30 s and once gave up for 5 minutes |
 | 1.1 | Hand-over add-on also built for arm64e (A12 and newer), with Apple's compiler on a Mac build runner; hand-overs stop if iOS's Wi-Fi service restarts right after one | Untested on A12 and newer |
 | 1.0 | Force 2.4 GHz switch, one switch on at a time; experiments that did nothing removed | Released |
 | 0.4.18 dev 9 | Status line in the log every 5 minutes; the scan that learns the radio gives up after 3 busy refusals | Worked |
@@ -97,11 +98,11 @@ and 0.5–0.7 s for the join handshake with the router.
 - [ ] **Does the router give up steering?** After the first hand-overs the iPhone stayed on
   5 GHz for long stretches at about −80 dBm. That could be chance or band steering giving up
   on a device that keeps coming straight back. The 5-minute status lines will show it.
-- [ ] **Band preference 1 for 2.4 GHz** in the hand-over request is inferred (`wifid`
-  accepts 0–2; 2 for 5 GHz is confirmed). Force 2.4 GHz falls back to disconnect-and-join if
-  it's wrong.
+- [x] **Band preference 1 for 2.4 GHz** in the hand-over request: confirmed on the iPhone 6s
+  (handed over to 2.4 GHz in 233 ms, no disconnect).
 - [ ] **Why iOS turns down scans while on 5 GHz** (error 0x10, busy) on the iPhone 6s.
-  Scans on 2.4 GHz work.
+  Scans on 2.4 GHz work. Since 1.2 the hand-over doesn't need a scan, so this only affects
+  the fallback.
 - [ ] **Newer iPhones:** since 1.1 the add-on is also built for arm64e, so iPhone XS, XR and
   newer should load it, but none has been tested. Check the log for `hand-over add-on loaded`
   and `handed over to`. Clang 18 on Linux can't make a proper arm64e build (its output is

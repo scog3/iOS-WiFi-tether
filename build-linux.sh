@@ -76,6 +76,26 @@ else
         -install_name /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherRoam.dylib \
         src/roam/roam.m -framework Foundation -framework CoreFoundation -o "$B/WiFiTetherRoam.dylib"
 fi
+# Which processors the add-on is built for (arm64e = A12 and newer), for the
+# log and GitHub's run summary (build/roam-archs.txt).
+ROAM_ARCHS="$(python3 - "$B/WiFiTetherRoam.dylib" <<'PY' 2>/dev/null || echo unknown
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+def name(cpu, sub):
+    if cpu == 0x100000c:
+        return {0: 'arm64', 1: 'arm64v8', 2: 'arm64e'}.get(sub & 0xffffff, 'arm64 (subtype %d)' % (sub & 0xffffff))
+    return 'cpu %#x' % cpu
+magic = struct.unpack_from('>I', d, 0)[0]
+if magic in (0xcafebabe, 0xcafebabf):   # fat: big-endian headers, 20 or 32 bytes each
+    size = 20 if magic == 0xcafebabe else 32
+    count = struct.unpack_from('>I', d, 4)[0]
+    print(' '.join(name(*struct.unpack_from('>II', d, 8 + i * size)) for i in range(count)))
+else:
+    print(name(*struct.unpack_from('<II', d, 4)))
+PY
+)"
+echo "   hand-over add-on built for: $ROAM_ARCHS"
+echo "$ROAM_ARCHS" > "$B/roam-archs.txt"
 
 echo "== Building app"
 "$CLANG" "${CFLAGS[@]}" -fobjc-arc -c src/app/main.m -o "$B/app_main.o"

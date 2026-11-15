@@ -256,12 +256,12 @@ root) fills that gap whenever sharing is on:
    While sharing and the band switches are off, `wifitetherd` and the VPN helper wait for
    the notification `com.wifitether.changed` instead of checking every second.
 6. **Wi-Fi band switcher.** `wifitetherd` listens to the Wi-Fi driver's events, so it
-   knows the moment the router moves the device, and remembers the forced band's radio
-   from a scan. It moves back with a hand-over first: a small add-on loaded into iOS's
-   Wi-Fi service (`src/roam`, loaded into `wifid`) asks for iOS's own roam to that band,
-   the same request iOS makes by itself when 2.4 GHz is poor. If that doesn't work, it
-   disconnects and joins the forced band's radio, telling iOS to avoid the other band's
-   radios for that one join. It backs off when the device won't stay, and changes nothing
+   knows the moment the router moves the device. It moves back with a hand-over first: a
+   small add-on loaded into iOS's Wi-Fi service (`src/roam`, loaded into `wifid`) asks for
+   iOS's own roam to that band, the same request iOS makes by itself when 2.4 GHz is poor.
+   iOS picks the radio, so this needs no scan. If it doesn't work, the app scans for the
+   forced band's radio, then disconnects and joins it, telling iOS to avoid the other
+   band's radios for that one join. It backs off when the device won't stay, and changes nothing
    about the network or its saved settings. The add-on is built twice: arm64 for A11 chips
    and older, and arm64e (with pointer authentication) for A12 and newer. If iOS's Wi-Fi
    service restarts straight after a hand-over request, the app stops asking for
@@ -281,7 +281,9 @@ release.
 The hand-over add-on's arm64e part is built with Apple's compiler on a GitHub Mac runner
 (the `roam` job), because the open-source compiler on Linux can't make a proper arm64e
 build yet; the Linux build then packages it. If that job fails, the release goes ahead
-with an arm64-only add-on.
+with an arm64-only add-on. Each run's page says which it got, at the top of its summary
+(*Hand-over add-on: arm64 arm64e* when the Mac part made it in, or a warning when it
+didn't), and the release notes end with the same line.
 
 To build locally on Linux, install `clang`, `lld`, `ldid` and `dpkg`, then run
 `bash build-linux.sh`. It builds the app, the background service, the VPN helper and the

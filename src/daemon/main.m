@@ -1001,6 +1001,8 @@ static int         g_b5HandTries;            /* hand-overs in this move */
 static time_t      g_b5HandOffUntil;         /* hand-overs paused (not working here) until */
 static pid_t       g_b5HandPid;              /* the wifid asked for the last hand-over */
 static int         g_b5HandBroken;           /* wifid restarted right after a hand-over: off until the switch is */
+static int         g_b5ScanThenJoin;         /* a hand-over with no radio known didn't work: scan, then join */
+static int         g_b5SeenBands;            /* bands this network was seen on: 1 = 2.4 GHz, 2 = 5 GHz */
 static int         g_b5Kicks, g_b5MoveCount;  /* since Force went on, for the status line */
 static time_t      g_b5LastKick, g_b5LastBeat;
 static int         g_b5ScanLearn;            /* the scan in flight only learns the radio (already on the band) */
@@ -1360,6 +1362,12 @@ static int b5HandoverReady(void)
     return ready;
 }
 
+/* Can a move start with a hand-over right now? */
+static int b5HandAvailable(time_t now)
+{
+    return !g_b5HandBroken && now >= g_b5HandOffUntil && b5HandoverReady();
+}
+
 /* The add-on's answer to each request, for the log. */
 static void b5HandoverListen(void)
 {
@@ -1376,6 +1384,24 @@ static void b5HandoverListen(void)
     });
 }
 
+static void b5Scanned(void *dev, CFArrayRef results, void *err, void *ctx);
+
+/* Asks iOS for a scan; the answer goes to b5Scanned. learn: only to learn
+ * the forced band's radio while already on it. */
+static void b5StartScan(int learn)
+{
+    static CFDictionaryRef opts;
+
+    if (!opts)
+        opts = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks,
+                                  &kCFTypeDictionaryValueCallBacks);
+    g_b5Busy = 1;
+    g_b5BusySince = time(NULL);
+    g_b5ScanLearn = learn;
+    b5GuardBegin("scan");
+    B5.scan(B5.dev, opts, b5Scanned, NULL);
+}
+
 static void b5Join(void *net, int rssi);
 static void b5HandoverTry(int rssi);
 
@@ -1387,7 +1413,7 @@ static void b5HandWatch(int checks, int rssi)
 {
     int band = b5CurrentBand();
 
-    if (!g_b5Running || !g_b5Joining) {
+    if (!g_b5Running) {
         b5EndMove();
         return;
     }
@@ -1413,7 +1439,7 @@ static void b5HandWatch(int checks, int rssi)
         NSLog(@"wifitetherd: band: hand-over %d didn't move it (on %s); trying again in %d s", g_b5HandTries,
               b5BandName(band), gap);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, gap * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            if (!g_b5Running || !g_b5Joining) {
+            if (!g_b5Running) {
                 b5EndMove();
                 return;
             }
@@ -1438,12 +1464,18 @@ static void b5HandWatch(int checks, int rssi)
         g_b5HandOffUntil = time(NULL) + 600;
         g_b5HandFails = 0;
     }
-    NSLog(@"wifitetherd: band: hand-over didn't move it (on %s after %d ms); disconnecting and rejoining instead",
-          b5BandName(band), b5Ms());
-    {
+    if (g_b5Joining) {
         void *net = (void *)CFRetain(g_b5Joining);   /* b5Join replaces g_b5Joining */
+        NSLog(@"wifitetherd: band: hand-over didn't move it (on %s after %d ms); disconnecting and rejoining instead",
+              b5BandName(band), b5Ms());
         b5Join(net, rssi);
         CFRelease(net);
+    } else {
+        /* It went without a scan: find the radio now, then join it. */
+        NSLog(@"wifitetherd: band: hand-over didn't move it (on %s after %d ms); scanning for the %s radio to "
+              @"join it instead", b5BandName(band), b5Ms(), b5WantName());
+        g_b5ScanThenJoin = 1;
+        b5StartScan(0);
     }
 }
 
@@ -1486,19 +1518,29 @@ static void b5Move(void *net, int rssi)
         g_b5QuickBacks = 0;
     }
     g_b5MoveCount++;
-    /* Hand-over first, where the add-on is there: no disconnect. */
-    if (!g_b5HandBroken && now >= g_b5HandOffUntil && b5HandoverReady()) {
+    /* Hand-over first, where the add-on is there: no disconnect, and no scan
+     * needed, since iOS picks the radio. net (the radio from a scan, for the
+     * fallback) may be NULL. */
+    if (b5HandAvailable(now)) {
         void *old = g_b5Joining;
-        g_b5Joining = (void *)CFRetain(net);
+        g_b5Joining = net ? (void *)CFRetain(net) : NULL;
         if (old)
             CFRelease(old);
-        NSLog(@"wifitetherd: band: on %s; handing over to the %s radio (channel %d, %d dBm)",
-              b5OtherName(), b5WantName(), b5Int(net, CFSTR("CHANNEL")), rssi);
+        if (net)
+            NSLog(@"wifitetherd: band: on %s; handing over to the %s radio (channel %d, %d dBm)",
+                  b5OtherName(), b5WantName(), b5Int(net, CFSTR("CHANNEL")), rssi);
+        else
+            NSLog(@"wifitetherd: band: on %s; handing over to %s", b5OtherName(), b5WantName());
         g_b5State = @"switching";
         g_b5NextTry = now + 30;
         g_b5Busy = 1;
         g_b5HandTries = 0;
         b5HandoverTry(rssi);
+        return;
+    }
+    if (!net) {   /* no hand-over and no radio known: find it first */
+        g_b5MoveCount--;
+        b5StartScan(0);
         return;
     }
     b5Join(net, rssi);
@@ -1573,6 +1615,10 @@ static void b5ScannedBody(CFArrayRef results, void *err)
             best = net;
         }
     }
+    if (n24)
+        g_b5SeenBands |= 1;
+    if (n5)
+        g_b5SeenBands |= 2;
     if (!best && n24 + n5 == 0) {
         /* Didn't even see the network the iPhone is on: iOS was busy or
          * the iPhone was asleep. Not a sign that the band is out of range. */
@@ -1586,7 +1632,20 @@ static void b5ScannedBody(CFArrayRef results, void *err)
     }
     if (learn)
         g_b5LearnFails = 0;
+    if (!best && (g_b5SeenBands & (g_b5Want == 2 ? 1 : 2))) {
+        /* This network's radio on the forced band has been seen before (or
+         * the iPhone was on it): the scan was incomplete, often because the
+         * iPhone was dozing. Not a reason to give up for minutes. */
+        NSLog(@"wifitetherd: band: the scan didn't show this network's %s radio, seen before; trying again in "
+              @"15 seconds", b5WantName());
+        if (learn)
+            g_b5NextScan5 = now + 30;
+        else
+            g_b5NextTry = now + 15;
+        return;
+    }
     if (!best) {
+        g_b5ScanThenJoin = 0;
         static int logged;
         if (!logged++)
             NSLog(@"wifitetherd: band: this network has no %s radio in range (%d on 2.4 GHz, %d on 5 GHz)",
@@ -1600,6 +1659,7 @@ static void b5ScannedBody(CFArrayRef results, void *err)
           @"the best %s one is at %d dBm", n24, n5, b5WantName(), bestRssi);
     if (bestRssi < B5_MIN_RSSI) {
         NSLog(@"wifitetherd: band: the %s radio is too weak to connect to here (%d dBm)", b5WantName(), bestRssi);
+        g_b5ScanThenJoin = 0;
         g_b5State = @"weak";
         g_b5NextTry = now + 120;
         return;
@@ -1614,6 +1674,12 @@ static void b5ScannedBody(CFArrayRef results, void *err)
     band = b5CurrentBand();
     if (b5OnWant(band)) {   /* already on the wanted band: nothing to move */
         g_b5State = @"on5";
+        g_b5ScanThenJoin = 0;
+        return;
+    }
+    if (g_b5ScanThenJoin) {   /* a hand-over already didn't work: join */
+        g_b5ScanThenJoin = 0;
+        b5Join(best, bestRssi);
         return;
     }
     b5Move(best, bestRssi);
@@ -1634,7 +1700,6 @@ static void b5Tick(void)
 
 static void b5TickBody(void)
 {
-    static CFDictionaryRef scanOptions;
     time_t now = time(NULL);
     CFArrayRef devs;
     void *cur;
@@ -1704,28 +1769,27 @@ static void b5TickBody(void)
             g_b5Target = NULL;
             g_b5LandedAt = 0;
             g_b5LearnFails = 0;
+            g_b5SeenBands = 0;
         }
     }
     if (b5OnWant(band))
         g_b5Rssi = b5Int(cur, CFSTR("RSSI"));
+    if (band == 2)   /* on it: this network has a radio on this band */
+        g_b5SeenBands |= 1;
+    else if (band >= 5)
+        g_b5SeenBands |= 2;
     CFRelease(cur);
 
     if (b5OnWant(band)) {
         if (![g_b5State isEqualToString:@"on5"] && g_b5LastJoin)
             NSLog(@"wifitetherd: band: on %s", b5WantName());
         g_b5State = @"on5";
-        /* Already on the forced band: scan once to learn its radio, so a
-         * kick to the other band is answered without a scan. */
-        if (!g_b5Target && !g_b5Busy && now >= g_b5NextScan5) {
+        /* Already on the forced band. Without hand-overs, scan once to learn
+         * its radio, so a kick to the other band is answered without a
+         * scan; hand-overs don't need one. */
+        if (!g_b5Target && !g_b5Busy && now >= g_b5NextScan5 && !b5HandAvailable(now)) {
             g_b5NextScan5 = now + 300;
-            if (!scanOptions)
-                scanOptions = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks,
-                                                 &kCFTypeDictionaryValueCallBacks);
-            g_b5Busy = 1;
-            g_b5BusySince = now;
-            g_b5ScanLearn = 1;
-            b5GuardBegin("scan");
-            B5.scan(B5.dev, scanOptions, b5Scanned, NULL);
+            b5StartScan(1);
         }
         return;
     }
@@ -1741,21 +1805,15 @@ static void b5TickBody(void)
     }
     if (g_b5Busy || now < g_b5NextTry || !g_b5SSID)
         return;
-    if (g_b5Target) {
+    if (g_b5Target || (!g_b5ScanThenJoin && b5HandAvailable(now))) {
         g_b5State = @"switching";
-        b5Move(g_b5Target, g_b5Rssi);
+        b5Move(g_b5Target, g_b5Rssi);   /* no radio known: hand-over, which needs none */
         return;
     }
     if (![g_b5State isEqualToString:@"weak"] && ![g_b5State isEqualToString:@"no5"] &&
         ![g_b5State isEqualToString:@"flapping"] && ![g_b5State isEqualToString:@"failed"])
         g_b5State = @"searching";
-    if (!scanOptions)
-        scanOptions = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks,
-                                         &kCFTypeDictionaryValueCallBacks);
-    g_b5Busy = 1;
-    g_b5BusySince = now;
-    b5GuardBegin("scan");
-    B5.scan(B5.dev, scanOptions, b5Scanned, NULL);
+    b5StartScan(0);
 }
 
 static NSString *hexOf(const void *p, size_t n)
@@ -1913,6 +1971,7 @@ static void b5Start(void)
     g_b5HandFails = 0;
     g_b5HandOffUntil = 0;
     g_b5HandBroken = 0;
+    g_b5ScanThenJoin = 0;
     g_b5Kicks = g_b5MoveCount = 0;
     g_b5LastKick = 0;
     g_b5LastBeat = time(NULL);

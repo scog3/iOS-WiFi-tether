@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2
+
+- **Band switches start straight away.** The hand-over now goes first, with no scan, since
+  iOS picks the radio itself. Before, the app scanned first, and iOS often turned scans
+  down while on 5 GHz, so switching could take 30 seconds or more.
+- Fixed: turning a band switch on just after picking up the phone could say the band
+  *isn't in range here* and give up for 5 minutes, because a scan made while the phone was
+  dozing came back incomplete. A band seen before on the same network no longer counts as
+  missing; it just tries again in 15 seconds.
+- No more scanning in the background while hand-overs work.
+- GitHub's build page and the release notes now say whether the hand-over add-on was built
+  for A12 and newer (arm64e).
+
 ## 1.1
 
 - **Hand-over for iPhone XS and newer (untested).** The band switcher's no-drop move back
