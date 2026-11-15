@@ -3,8 +3,6 @@
 ## 0.4.8
 
 - The **Wi-Fi** row shows which band the iPhone is on, e.g. *192.168.1.133 · 5 GHz*.
-  On 2.4 GHz everything is a lot slower, the computer included; many routers decide
-  the band themselves and can leave the iPhone on 2.4 GHz.
 
 ## 0.4.7
 
