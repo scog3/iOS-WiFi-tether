@@ -17,10 +17,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The band switcher's hand-over add-on runs inside iOS's Wi-Fi service, so
+  # on A12 and newer it has to be arm64e, which only Apple's compiler builds
+  # properly. This job builds it (arm64 + arm64e) on a Mac for the main build.
+  # If it fails, the main build goes ahead with an arm64-only add-on.
+  roam:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the hand-over add-on (arm64 + arm64e)
+        run: |
+          xcrun -sdk iphoneos clang -arch arm64 -arch arm64e -miphoneos-version-min=15.0 -Os -Wall \
+            -fobjc-arc -dynamiclib \
+            -install_name /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherRoam.dylib \
+            src/roam/roam.m -framework Foundation -framework CoreFoundation -o WiFiTetherRoam.dylib
+          lipo -info WiFiTetherRoam.dylib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roam-dylib
+          path: WiFiTetherRoam.dylib
+
   build:
+    needs: roam
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Get the arm64e add-on from the Mac build
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: roam-dylib
+          path: prebuilt
 
       - name: Install tools
         run: |
@@ -36,6 +68,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          export ROAM_DYLIB="$PWD/prebuilt/WiFiTetherRoam.dylib"
           PKG_VERSION="$(tr -d '[:space:]' < VERSION)-${GITHUB_RUN_NUMBER}" bash build-linux.sh 2>&1 | tee build.log
 
       - name: Release notes from CHANGELOG.md
