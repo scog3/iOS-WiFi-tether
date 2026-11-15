@@ -897,13 +897,18 @@ static NSString *usbWait(void)
  * An iPhone only looks for a better access point once its signal drops below
  * -70 dBm (Apple: "Wi-Fi roaming support in Apple devices"), so once it has
  * joined a router's 2.4 GHz radio it stays there, even right next to the
- * router. While the "Force 5 GHz" switch is on, every 5 seconds: if the
- * iPhone is on 2.4 GHz, scan; if the same network has a 5 GHz (or 6 GHz)
- * radio it can still connect to, join that radio (MobileWiFi), however weak:
- * the user asked for 5 GHz and was warned it can be unstable. When iOS goes
- * back to 2.4 GHz it's moved again. A safety limit of 10 moves in 10 minutes
- * stops a runaway loop from keeping Wi-Fi down. Nothing about the network or
- * its saved settings is changed.
+ * router, and asking it to join the 5 GHz radio doesn't help: iOS picks the
+ * radio itself. So while the "Force 5 GHz" switch is on, WiFi Tether puts the
+ * network's 2.4 GHz radios on iOS's own BSS blacklist (the list iOS uses to
+ * avoid access points that misbehave; wifid's WiFiDeviceManagerProcessBss-
+ * BlacklistCommandsAndCopyResponse, reached through MobileWiFi). With 2.4 GHz
+ * blocked, iOS's own joining and roaming pick 5 GHz and stay there. iOS drops
+ * entries after 5 minutes, so they're renewed every 4 minutes while 5 GHz is
+ * usable, and removed when it isn't (out of range, Wi-Fi lost, other network,
+ * switch off), so the iPhone can always fall back to 2.4 GHz.
+ * Checked every 5 seconds. If blocking isn't available, it falls back to
+ * disconnecting and joining 5 GHz, with a limit of 10 moves in 10 minutes.
+ * Nothing about the network or its saved settings is changed.
  * ------------------------------------------------------------------------- */
 #define WT_PREFER5     WT_DIR "/prefer-5ghz"
 #define B5_MIN_RSSI    (-85)   /* weaker than this, it can't really connect */
@@ -927,6 +932,9 @@ static struct {
     CFStringRef  (*copyPassword)(void *);
     void         (*setPassword)(void *, CFStringRef);
     void         (*setPower)(void *, bool);
+    CFDictionaryRef (*blacklist)(void *, CFDictionaryRef);   /* BSS blacklist command -> response */
+    CFDictionaryRef (*copyRecord)(void *);
+    void         (*setProp)(void *, CFStringRef, CFTypeRef);
 } B5;
 
 static dispatch_source_t g_b5Timer;
@@ -940,6 +948,10 @@ static int         g_b5JoinTries;            /* joins in this move */
 static int         g_b5Rescued;              /* already turned Wi-Fi off and on after this move */
 static CFStringRef g_b5SSID;                 /* the network the iPhone is on */
 static void       *g_b5Joining;              /* the radio being moved to (retained for the move) */
+static NSArray    *g_b5Blocked;              /* records of the 2.4 GHz radios we blocked */
+static NSString   *g_b5BlockedSSID;
+static time_t      g_b5BlockedAt, g_b5LastWifi, g_b5NextScan5;
+static int         g_b5Lock = -1;            /* blocking 2.4 GHz: -1 not tried, 0 unavailable, 1 works */
 
 static void b5Tick(void);
 
@@ -986,6 +998,9 @@ static int b5Init(void)
     B5.copyPassword = dlsym(RTLD_DEFAULT, "WiFiNetworkCopyPassword");
     B5.setPassword = dlsym(RTLD_DEFAULT, "WiFiNetworkSetPassword");
     B5.setPower = dlsym(RTLD_DEFAULT, "WiFiManagerClientSetPower");
+    B5.blacklist = dlsym(RTLD_DEFAULT, "WiFiDeviceClientBssBlacklistCommandAndCopyResponse");
+    B5.copyRecord = dlsym(RTLD_DEFAULT, "WiFiNetworkCopyRecord");
+    B5.setProp = dlsym(RTLD_DEFAULT, "WiFiNetworkSetProperty");
     if (!create || !schedule || !B5.copyDevices || !B5.copyCurrent || !B5.getProp ||
         !B5.getSSID || !B5.scan || !B5.join) {
         NSLog(@"wifitetherd: 5 GHz: iOS's Wi-Fi functions weren't found; not available");
@@ -1029,6 +1044,102 @@ static void b5Power(void)
     B5.setPower(B5.mgr, false);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1500 * NSEC_PER_MSEC)),
                    dispatch_get_main_queue(), ^{ B5.setPower(B5.mgr, true); });
+}
+
+static NSString *b5Str(NSDictionary *rec, NSString *key)
+{
+    id v = rec[key];
+    return [v isKindOfClass:NSString.class] ? v : nil;
+}
+
+/* A scan record as a plain property list: the request travels to wifid as
+ * one, and wifid matches it to the saved network by name, mode and security. */
+static NSDictionary *b5PlistOnly(NSDictionary *rec)
+{
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    [rec enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) {
+        if ([k isKindOfClass:NSString.class] &&
+            [NSPropertyListSerialization propertyList:v isValidForFormat:NSPropertyListBinaryFormat_v1_0])
+            out[k] = v;
+    }];
+    return out;
+}
+
+/* One BSS blacklist command to iOS's Wi-Fi service. The answer lists every
+ * blocked radio (keys networks, reasons, timestamps, reasonData). */
+static NSDictionary *b5BlacklistCommand(NSString *command, NSDictionary *record)
+{
+    NSMutableDictionary *req = [NSMutableDictionary dictionaryWithObject:command forKey:@"command"];
+    CFDictionaryRef r;
+
+    if (record)
+        req[@"network"] = record;
+    if ([command isEqualToString:@"kBssBlacklistSet"])
+        req[@"reason"] = @8L;   /* the one reason wifid accepts for this command */
+    b5GuardBegin("blacklist");
+    r = B5.blacklist(B5.dev, (__bridge CFDictionaryRef)req);
+    b5GuardEnd();
+    /* It returns a copied dictionary; anything that doesn't look like one isn't touched. */
+    if (!r || (uintptr_t)r < 0x100000000ULL || ((uintptr_t)r & 7) || CFGetTypeID(r) != CFDictionaryGetTypeID())
+        return nil;
+    return CFBridgingRelease(r);
+}
+
+/* Blocks these 2.4 GHz radios (or renews the block). Returns 1 if iOS took them. */
+static int b5Block(NSArray *records, NSString *ssid)
+{
+    int took = 0, logged = 0;
+
+    if (!B5.blacklist || !records.count)
+        return 0;
+    for (NSDictionary *rec in records) {
+        NSDictionary *resp = b5BlacklistCommand(@"kBssBlacklistSet", rec);
+        NSArray *nets = [resp[@"networks"] isKindOfClass:NSArray.class] ? resp[@"networks"] : nil;
+        NSString *mine = b5Str(rec, @"BSSID");
+        int found = 0;
+        /* Listed by its BSSID, or (if iOS leaves that out of its answer) by the network's name. */
+        for (id n in nets) {
+            NSString *b = [n isKindOfClass:NSDictionary.class] ? b5Str(n, @"BSSID") : nil;
+            NSString *name = [n isKindOfClass:NSDictionary.class] ? b5Str(n, @"SSID_STR") : nil;
+            if ((b && mine && [b caseInsensitiveCompare:mine] == NSOrderedSame) ||
+                (!b && name && [name isEqualToString:ssid]))
+                found = 1;
+        }
+        took += found;
+        if (!took && !logged++ && g_b5Lock != 1) {
+            NSString *d = [[resp.description componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]
+                           componentsJoinedByString:@" "];
+            NSLog(@"wifitetherd: 5 GHz: blocking 2.4 GHz: iOS answered %@",
+                  d.length > 500 ? [d substringToIndex:500] : (d ?: @"nothing"));
+        }
+    }
+    if (took) {
+        if (g_b5Lock != 1 || !g_b5Blocked)
+            NSLog(@"wifitetherd: 5 GHz: blocked %lu 2.4 GHz radio(s) of this network, so iOS stays on 5 GHz",
+                  (unsigned long)records.count);
+        g_b5Lock = 1;
+        g_b5Blocked = records;
+        g_b5BlockedSSID = ssid;
+        g_b5BlockedAt = time(NULL);
+        return 1;
+    }
+    if (g_b5Lock != 0)
+        NSLog(@"wifitetherd: 5 GHz: iOS didn't accept blocking 2.4 GHz on this iPhone; moving to 5 GHz the old way");
+    g_b5Lock = 0;
+    return 0;
+}
+
+/* Lifts our block, so the iPhone can use 2.4 GHz again. */
+static void b5Unblock(const char *why)
+{
+    if (!g_b5Blocked)
+        return;
+    NSLog(@"wifitetherd: 5 GHz: unblocking 2.4 GHz (%s)", why);
+    if (B5.blacklist && B5.dev)
+        for (NSDictionary *rec in g_b5Blocked)
+            b5BlacklistCommand(@"kBssBlacklistClear", rec);
+    g_b5Blocked = nil;
+    g_b5BlockedSSID = nil;
 }
 
 static void b5EndMove(void)
@@ -1202,6 +1313,16 @@ static void b5Join(void *net, int rssi)
         CFRelease(g_b5Joining);
     g_b5Joining = (void *)CFRetain(net);
     g_b5JoinTries = 0;
+    /* Same list wifid adds to its own joins: avoid these radios for this join. */
+    if (g_b5Blocked && B5.setProp) {
+        NSMutableArray *bssids = [NSMutableArray array];
+        for (NSDictionary *rec in g_b5Blocked)
+            if (b5Str(rec, @"BSSID") && bssids.count < 3)
+                [bssids addObject:b5Str(rec, @"BSSID")];
+        if (bssids.count)
+            B5.setProp(g_b5Joining, CFSTR("BSS_BLACKLIST"),
+                       (__bridge CFTypeRef)@{ @"BSS_BLACKLIST_BSSIDS": bssids });
+    }
     b5JoinNow();
 }
 
@@ -1219,7 +1340,8 @@ static void b5ScannedBody(CFArrayRef results, void *err)
 {
     time_t now = time(NULL);
     void *best = NULL;
-    int bestRssi = -200, n24 = 0, n5 = 0;
+    int bestRssi = -200, n24 = 0, n5 = 0, band;
+    NSMutableArray *radios24 = [NSMutableArray array];
 
     g_b5Busy = 0;
     if (!g_b5Running)
@@ -1238,8 +1360,14 @@ static void b5ScannedBody(CFArrayRef results, void *err)
             continue;
         band = b5Band(net);
         rssi = b5Int(net, CFSTR("RSSI"));
-        if (band == 2)
+        if (band == 2) {
             n24++;
+            if (B5.copyRecord) {
+                NSDictionary *rec = CFBridgingRelease(B5.copyRecord(net));
+                if ([rec isKindOfClass:NSDictionary.class] && b5Str(rec, @"BSSID"))
+                    [radios24 addObject:b5PlistOnly(rec)];
+            }
+        }
         if (band < 5)
             continue;
         n5++;
@@ -1252,6 +1380,7 @@ static void b5ScannedBody(CFArrayRef results, void *err)
         static int logged;
         if (!logged++)
             NSLog(@"wifitetherd: 5 GHz: this network has no 5 GHz radio in range (%d on 2.4 GHz)", n24);
+        b5Unblock("no 5 GHz in range");
         g_b5State = @"no5";
         g_b5NextTry = now + 300;
         return;
@@ -1261,8 +1390,17 @@ static void b5ScannedBody(CFArrayRef results, void *err)
           @"the best 5 GHz one is at %d dBm", n24, n5, bestRssi);
     if (bestRssi < B5_MIN_RSSI) {
         NSLog(@"wifitetherd: 5 GHz: the 5 GHz radio is too weak to connect to here (%d dBm)", bestRssi);
+        b5Unblock("5 GHz too weak");
         g_b5State = @"weak";
         g_b5NextTry = now + 120;
+        return;
+    }
+    /* Block this network's 2.4 GHz radios, so iOS itself joins and stays on 5 GHz. */
+    if (g_b5Lock != 0 && radios24.count)
+        b5Block(radios24, (__bridge NSString *)g_b5SSID);
+    band = b5CurrentBand();
+    if (band >= 5) {   /* already on 5 GHz: nothing to move */
+        g_b5State = @"on5";
         return;
     }
     if (g_b5Moves[0] && now - g_b5Moves[0] < B5_FLAP_WINDOW) {
@@ -1326,6 +1464,14 @@ static void b5TickBody(void)
     }
 
     cur = B5.copyCurrent(B5.dev);
+    if (!cur && g_b5Blocked && g_b5LastWifi && now - g_b5LastWifi >= 20) {
+        /* No Wi-Fi for 20 seconds with 2.4 GHz blocked: 5 GHz is out of reach.
+         * Unblock and let iOS reconnect however it can. */
+        b5Unblock("no Wi-Fi for 20 seconds");
+        g_b5QuietUntil = now + 30;
+        b5Power();
+        g_b5NextTry = now + 120;
+    }
     if (!cur) {
         /* A move left Wi-Fi disconnected: turn Wi-Fi off and on so iOS
          * reconnects by itself. Once per move. */
@@ -1339,6 +1485,7 @@ static void b5TickBody(void)
             g_b5State = @"nowifi";
         return;
     }
+    g_b5LastWifi = now;
     band = b5Band(cur);
     {
         CFStringRef s = B5.getSSID(cur);
@@ -1348,16 +1495,34 @@ static void b5TickBody(void)
             g_b5SSID = CFStringCreateCopy(NULL, s);
             memset(g_b5Moves, 0, sizeof(g_b5Moves));   /* new network: fresh start */
             g_b5NextTry = 0;
+            g_b5NextScan5 = 0;
+            b5Unblock("joined another network");
         }
     }
     if (band >= 5)
         g_b5Rssi = b5Int(cur, CFSTR("RSSI"));
     CFRelease(cur);
 
+    /* iOS forgets blocks after 5 minutes: renew every 4. */
+    if (g_b5Blocked && now - g_b5BlockedAt >= 240 && !g_b5Busy)
+        b5Block(g_b5Blocked, g_b5BlockedSSID);
+
     if (band >= 5) {
         if (![g_b5State isEqualToString:@"on5"] && g_b5LastJoin)
             NSLog(@"wifitetherd: 5 GHz: on 5 GHz");
         g_b5State = @"on5";
+        /* Already on 5 GHz but 2.4 GHz not blocked yet: scan once to find its
+         * radios, so iOS can't switch back. */
+        if (!g_b5Blocked && g_b5Lock != 0 && B5.blacklist && !g_b5Busy && now >= g_b5NextScan5) {
+            g_b5NextScan5 = now + 300;
+            if (!scanOptions)
+                scanOptions = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks,
+                                                 &kCFTypeDictionaryValueCallBacks);
+            g_b5Busy = 1;
+            g_b5BusySince = now;
+            b5GuardBegin("scan");
+            B5.scan(B5.dev, scanOptions, b5Scanned, NULL);
+        }
         return;
     }
     if (band == 0) {
@@ -1410,6 +1575,7 @@ static void b5Update(void)
     NSLog(@"wifitetherd: force 5 GHz: %s", want ? "on" : "off");
     if (want) {
         g_b5NextTry = 0;
+        g_b5Lock = -1;   /* find out again whether blocking works */
         memset(g_b5Moves, 0, sizeof(g_b5Moves));
         g_b5State = @"searching";
         dispatch_resume(g_b5Timer);
@@ -1418,6 +1584,8 @@ static void b5Update(void)
         dispatch_suspend(g_b5Timer);
         g_b5State = @"off";
         g_b5Rssi = 0;
+        b5Unblock("switched off");
+        g_b5NextScan5 = 0;
         b5GuardEnd();
     }
 }
@@ -1650,6 +1818,8 @@ static void reconcile(void)
         st[@"state"] = state;
         st[@"detail"] = detail;
         st[@"band5"] = g_b5State;
+        if (g_b5Running && g_b5Lock >= 0)
+            st[@"band5lock"] = @(g_b5Lock && g_b5Blocked != nil);
         if (g_b5Rssi)
             st[@"band5rssi"] = @(g_b5Rssi);
         st[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
@@ -1678,6 +1848,7 @@ static dispatch_source_t watchSignal(int sig)
         dhcpRestore();
         writeStatus(@{ @"state": @"stopped", @"detail": @"",
                        @"updated": @0, @"enabled": @(isEnabled()) });
+        b5Unblock("WiFi Tether stopping");
         b5GuardEnd();   /* a deliberate stop, not a crash */
         exit(0);
     });

@@ -314,11 +314,14 @@ static NSString *wifiBand(void)
         text = @"Keeps this iPhone on your Wi-Fi's faster 5 GHz band, even where iOS would switch to slow "
                @"2.4 GHz. iOS has no setting for this. Works with sharing off too.\n"
                @"Where the 5 GHz signal is weak, Wi-Fi can be slower or unstable.";
-    else if ([s isEqualToString:@"on5"] && rssi && rssi < -72)
-        text = [NSString stringWithFormat:@"On 5 GHz%@. The signal is weak here, so the connection may be "
-                                          @"slower or drop for a moment now and then.", dbm];
-    else if ([s isEqualToString:@"on5"])
-        text = [NSString stringWithFormat:@"On 5 GHz%@.", dbm];
+    else if ([s isEqualToString:@"on5"]) {
+        id lock = st[@"band5lock"];
+        NSString *how = !lock ? @""
+            : [lock boolValue] ? @" 2.4 GHz is blocked, so iOS stays on 5 GHz."
+            : @" This iPhone can't block 2.4 GHz, so iOS may switch back now and then.";
+        NSString *weak = rssi && rssi < -72 ? @" The signal is weak here, so the connection may be slower." : @"";
+        text = [NSString stringWithFormat:@"On 5 GHz%@.%@%@", dbm, how, weak];
+    }
     else if ([s isEqualToString:@"switching"])
         text = @"Moving to 5 GHz…";
     else if ([s isEqualToString:@"searching"])

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.13
+
+- **Force 5 GHz actually holds 5 GHz now.** Asking iOS to join the 5 GHz radio didn't
+  work: iOS chooses the radio itself and picked 2.4 GHz again. Now WiFi Tether puts
+  your network's 2.4 GHz radios on iOS's own block list (the one iOS uses for access
+  points that misbehave), so iOS itself joins 5 GHz and won't switch back. The block
+  is lifted automatically when 5 GHz goes out of range, Wi-Fi drops, you join another
+  network or switch it off, so you're never left without Wi-Fi.
+- The text under the switch says whether 2.4 GHz is blocked. On an iPhone where
+  blocking isn't available it falls back to the old way.
+
 ## 0.4.12
 
 - **Force 5 GHz** joins 5 GHz only once the disconnect has actually happened. Joining

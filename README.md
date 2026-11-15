@@ -187,14 +187,18 @@ address but has no route to the internet. WiFi Tether's background service
    `com.wifitether.changed` instead of checking every second.
 
 6. **Force 5 GHz.** An iPhone only looks for a better access point once its signal
-   drops below −70 dBm, so once it's on a router's 2.4 GHz radio it stays there; iOS
-   has no setting to choose the band. While this switch is on, `wifitetherd` checks
-   every 5 seconds; on 2.4 GHz it scans, and if the same network has a 5 GHz radio it
-   can connect to (−85 dBm or better) it disconnects and joins that radio straight away
-   (MobileWiFi `WiFiDeviceClientScanAsync` / `WiFiDeviceClientAssociateAsync`, with the
-   network's saved password; joining while connected is ignored by iOS). Whenever iOS
-   goes back to 2.4 GHz it's moved again; a safety limit of 10 moves in 10 minutes
-   stops a runaway loop. It runs whether sharing is on or off.
+   drops below −70 dBm, so once it's on a router's 2.4 GHz radio it stays there; and
+   asking iOS to join the 5 GHz radio doesn't help, because iOS picks the radio itself.
+   So while this switch is on, `wifitetherd` puts the network's 2.4 GHz radios on
+   iOS's own BSS blacklist, the list iOS uses to avoid access points that misbehave
+   (`WiFiDeviceClientBssBlacklistCommandAndCopyResponse` in MobileWiFi; command
+   `kBssBlacklistSet`, reason 8, found by reading `wifid`). With 2.4 GHz blocked,
+   iOS's own joining and roaming pick 5 GHz and stay there. iOS drops these entries
+   after 5 minutes, so they're renewed every 4 while 5 GHz is usable, and removed
+   when it isn't (out of range, no Wi-Fi for 20 seconds, another network, switch
+   off), so the iPhone can always fall back to 2.4 GHz. If blocking isn't available
+   on an iPhone, it falls back to disconnecting and joining 5 GHz. Checked every 5
+   seconds; it runs whether sharing is on or off.
 
 Everything is removed again when you switch sharing off or uninstall.
 
