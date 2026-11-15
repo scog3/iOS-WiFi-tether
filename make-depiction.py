@@ -17,12 +17,25 @@ def md(s):
     # Sileo's markdown wants list items on one line
     return re.sub(r"\n(?!\s*[-*] |\n)\s+", " ", s)
 
+# Where the repo is published (from the control file), for the screenshots
+base = re.search(r"^SileoDepiction: *(\S+/)depiction\.json",
+                 open("packaging/control", encoding="utf-8").read(), re.M).group(1)
+screenshots = [("screenshots/sharing-vpn.png", "Sharing the iPhone's VPN over USB"),
+               ("screenshots/sharing-wifi.png", "Sharing the iPhone's Wi-Fi over USB")]
+
 details = (
-    "Share your jailbroken iPhone's **Wi-Fi** connection with a computer over **USB**, "
-    "or its **VPN** when one is connected.\n\n"
-    "1. Connect the iPhone to Wi-Fi.\n"
-    "2. Open **WiFi Tether** and turn the switch on.\n"
-    "3. Plug the iPhone into the computer.\n\n"
+    "**Plug-and-play USB tethering.** Plug your iPhone into a computer and the computer is "
+    "online through the iPhone's **Wi-Fi**, or through its **VPN**. No SIM, no data plan, "
+    "nothing to set up on the computer.\n\n"
+    "- **Plug and play.** Leave the switch on and just plug in. If Windows misses the "
+    "connection, WiFi Tether retries by itself.\n"
+    "- **Shares your VPN.** VPN apps or the built-in VPN: the computer goes through it too, DNS included.\n"
+    "- **Switch VPN location while plugged in.** The computer follows within a second or two.\n"
+    "- **Full speed.** No cap: about what the iPhone itself gets, up to what the USB port "
+    "carries. Through a VPN, as fast as the VPN runs on the phone.\n"
+    "- **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected, handles airplane mode.\n"
+    "- **No battery drain when it's off.**\n"
+    "- **Free and open source** (MIT).\n\n"
     "Needs the **Share** tweak: the app has a button that adds its repo in Sileo. "
     "Rootless jailbreaks, iOS 15 and later.\n\n"
     "[Source code on GitHub](https://github.com/scog3/iOS-WiFi-tether)"
@@ -40,7 +53,10 @@ dep = {
     "headerImage": "",
     "tabs": [
         {"tabname": "Details", "class": "DepictionStackView",
-         "views": [{"class": "DepictionMarkdownView", "markdown": details, "useSpacing": True}]},
+         "views": [{"class": "DepictionScreenshotsView", "itemCornerRadius": 8,
+                    "itemSize": "{160, 284.5}",   # the screenshots are 750 x 1334
+                    "screenshots": [{"url": base + p, "accessibilityText": t} for p, t in screenshots]},
+                   {"class": "DepictionMarkdownView", "markdown": details, "useSpacing": True}]},
         {"tabname": "Changelog", "class": "DepictionStackView", "views": changelog},
     ],
 }
@@ -79,7 +95,9 @@ h2{{font-size:20px;margin:24px 0 8px}} h3{{font-size:16px;margin:18px 0 4px}}
 ul,ol{{padding-left:20px;margin:6px 0}} li{{margin:4px 0}} p{{margin:8px 0}}
 code{{background:var(--code);padding:1px 4px;border-radius:4px;font-size:14px}}
 a{{color:#0a84ff}} hr{{border:0;border-top:1px solid var(--line);margin:20px 0}}
+.shots{{display:flex;gap:10px}} .shots img{{width:calc(50% - 5px);max-width:220px;border-radius:10px}}
 </style></head><body>
+<div class="shots">{"".join(f'<img src="{html.escape(p)}" alt="{html.escape(t)}">' for p, t in screenshots)}</div>
 {to_html(details)}
 <hr><h2>Changelog</h2>
 {"".join(f"<h3>{html.escape(v)}</h3>{to_html(b)}" for v, b in versions)}

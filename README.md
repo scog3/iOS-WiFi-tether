@@ -1,16 +1,34 @@
 # WiFi Tether: share a jailbroken iPhone's Wi-Fi over USB
 
-**Free, open-source tethering for rootless jailbreaks on iOS 15 and later, on iPhone and iPad.**
-Plug your iPhone into a computer and the computer gets internet through the
-iPhone's **Wi-Fi** connection. It works without a SIM card, without mobile data
-and without a carrier tethering plan.
+**Free, open-source, plug-and-play USB tethering for rootless jailbreaks (iOS 15 and later).**
+Plug your iPhone into a computer and the computer is online through the iPhone's
+**Wi-Fi**, or through its **VPN**. No SIM, no data plan, nothing to set up on the computer.
 
-If a **VPN** is connected on the iPhone, the computer's traffic goes through the VPN
-too, with nothing to set up on the computer.
+<p align="center">
+  <img src="screenshots/sharing-vpn.png" width="260" alt="WiFi Tether sharing the iPhone's VPN over USB">
+  <img src="screenshots/sharing-wifi.png" width="260" alt="WiFi Tether sharing the iPhone's Wi-Fi over USB">
+</p>
 
-Useful when a computer has no Wi-Fi, broken Wi-Fi, or can't join a network the
-iPhone can, like a captive portal you've already signed in to on the phone.
-It's a free alternative to paid tweaks such as Tethera and TetherMe.
+## Features
+
+- **Plug and play.** Leave the switch on and just plug in: the computer is online in
+  seconds, with nothing to set up. If Windows misses the connection, WiFi Tether
+  retries by itself.
+- **Shares your VPN.** Connect a VPN app or the built-in VPN on the iPhone and the
+  computer goes through it too, DNS included.
+- **Switch VPN location while plugged in.** The computer follows within a second or two.
+  No unplugging, no hanging connections.
+- **Full speed.** No cap: the computer gets about what the iPhone itself gets, up to
+  what the USB port carries (USB 2.0 on Lightning, a few hundred Mbps). Through a VPN,
+  it's as fast as the VPN runs on the phone.
+- **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected and turns airplane
+  mode off if needed. Switch it off and everything goes back to how it was.
+- **No SIM or data plan needed.** It shares Wi-Fi, not mobile data.
+- **No battery drain when it's off.** The background services sleep.
+- **Free and open source** (MIT), unlike paid tweaks such as Tethera and TetherMe.
+
+Handy when a computer has no Wi-Fi, broken Wi-Fi, or can't join a network the iPhone
+can, like a captive portal you've already signed in to on the phone.
 
 > **Beta.** Tested on iPhone with iOS 15.8.5 (Dopamine, rootless) and a Windows PC.
 > iPads should work too, since Share supports them (including Wi-Fi-only models), but haven't been tested yet.
@@ -96,8 +114,11 @@ by Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's n
 
 - **"Waiting for the computer" for a long time.** The first time on a new USB port,
   Windows can miss the connection. WiFi Tether restarts the hotspot to make it try
-  again; if that doesn't help, unplug and plug back in. A "Trust This Computer" prompt
-  may flash up during this and disappear by itself.
+  again; if that doesn't help, unplug and plug back in.
+- **"Trust This Computer?"** That comes from Apple's software on the computer (iTunes
+  or Apple Devices), which asks to pair with any iPhone it sees. Tethering doesn't use
+  it, so it works whichever you tap. Tap **Trust** on your own computer and it won't
+  ask again; tap **Don't Trust** and it asks every time you plug in.
 - **Airplane mode.** Personal Hotspot can't run in airplane mode. Switching WiFi Tether
   on turns airplane mode off and switching it off turns it back on.
 
@@ -107,6 +128,11 @@ by Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's n
 - **Computer says "No internet" or "Unidentified network".** Unplug and plug the
   iPhone back in so the computer asks for a new address. On Windows,
   `ipconfig /renew` in Command Prompt does the same.
+- **Slow?** The computer gets about what the iPhone's own Wi-Fi gets. The **Wi-Fi** row
+  in the app shows the band: on **2.4 GHz** everything is a lot slower than on 5 GHz.
+  Many routers use one name for both bands and choose the band themselves; turning
+  Wi-Fi off and on near the router often moves the iPhone back to 5 GHz, and some
+  routers can give the 5 GHz band its own name.
 - **Testing while the computer is also on Wi-Fi.** The computer may keep using
   its own Wi-Fi. Turn the computer's Wi-Fi off to test.
 - **Log and status files** are on the iPhone in `/var/mobile/Library/WiFiTether/`

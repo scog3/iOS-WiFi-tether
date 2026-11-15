@@ -12,6 +12,7 @@ mkdir -p "$R/debs"
 cp "$@" "$R/debs/"
 cp src/app/icons/AppIcon60x60@2x.png "$R/CydiaIcon.png"   # repo icon in Sileo
 cp src/app/icons/AppIcon60x60@3x.png "$R/icon.png"        # package icon
+cp -r screenshots "$R/"                                   # for the package page
 
 python3 make-depiction.py "$R/depiction.json"           # Sileo's package page
 
@@ -44,7 +45,8 @@ cat > "$R/index.html" <<'EOF'
 a.b{display:inline-block;background:#007aff;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;font-weight:600}
 code{background:#f0f0f0;padding:2px 5px;border-radius:4px}</style></head><body>
 <h1>WiFi Tether</h1>
-<p>Share a jailbroken iPhone's Wi-Fi over USB. Rootless jailbreaks, iOS 15 and later.</p>
+<p>Plug-and-play USB tethering: share a jailbroken iPhone's Wi-Fi, or its VPN, with a computer. No SIM or data plan, nothing to set up on the computer. Rootless jailbreaks, iOS 15 and later.</p>
+<p style="display:flex;gap:10px"><img src="screenshots/sharing-vpn.png" alt="Sharing the iPhone's VPN over USB" style="width:calc(50% - 5px);max-width:220px;border-radius:10px"><img src="screenshots/sharing-wifi.png" alt="Sharing the iPhone's Wi-Fi over USB" style="width:calc(50% - 5px);max-width:220px;border-radius:10px"></p>
 <p><a class="b" id="add" href="#">Add to Sileo</a></p>
 <p>Or add this source in Sileo by hand: <code id="url"></code></p>
 <p>WiFi Tether needs the <a href="https://github.com/amineross/share">Share</a> tweak: open the WiFi Tether app and tap <b>Add Share's Repo in Sileo</b>, or add <code>https://aminerostane.com/repo</code> in Sileo yourself. If Sileo's <b>Add Source</b> doesn't add a repo, tap <b>Add Dist Repo</b> instead, then <b>Add</b>.</p>

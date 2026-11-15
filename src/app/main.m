@@ -6,6 +6,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 #include <notify.h>
+#include <dlfcn.h>
 
 #define WT_DIR      @"/var/mobile/Library/WiFiTether"
 #define WT_ENABLED  WT_DIR @"/enabled"
@@ -14,6 +15,52 @@
 
 @interface WTViewController : UIViewController
 @end
+
+/* Which band the iPhone's Wi-Fi is on, from the network it's joined (MobileWiFi; needs
+ * com.apple.wifi.manager-access). nil if there's no Wi-Fi or it can't tell. */
+static NSString *wifiBand(void)
+{
+    static void *mgr;
+    static CFArrayRef (*copyDevices)(void *);
+    static void *(*copyCurrent)(void *);
+    static CFTypeRef (*getProp)(void *, CFStringRef);
+    static BOOL tried;
+    NSString *band = nil;
+
+    if (!tried) {
+        void *(*create)(CFAllocatorRef, int);
+        tried = YES;
+        dlopen("/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi", RTLD_LAZY);
+        create = dlsym(RTLD_DEFAULT, "WiFiManagerClientCreate");
+        copyDevices = dlsym(RTLD_DEFAULT, "WiFiManagerClientCopyDevices");
+        copyCurrent = dlsym(RTLD_DEFAULT, "WiFiDeviceClientCopyCurrentNetwork");
+        getProp = dlsym(RTLD_DEFAULT, "WiFiNetworkGetProperty");
+        if (create && copyDevices && copyCurrent && getProp)
+            mgr = create(kCFAllocatorDefault, 0);
+    }
+    if (!mgr)
+        return nil;
+    CFArrayRef devs = copyDevices(mgr);
+    if (!devs)
+        return nil;
+    void *net = CFArrayGetCount(devs) > 0 ? copyCurrent((void *)CFArrayGetValueAtIndex(devs, 0)) : NULL;
+    if (net) {
+        CFTypeRef ch = getProp(net, CFSTR("CHANNEL")), fl = getProp(net, CFSTR("CHANNEL_FLAGS"));
+        int c = 0, f = 0;
+        if (ch && CFGetTypeID(ch) == CFNumberGetTypeID())
+            CFNumberGetValue(ch, kCFNumberIntType, &c);
+        if (fl && CFGetTypeID(fl) == CFNumberGetTypeID())
+            CFNumberGetValue(fl, kCFNumberIntType, &f);
+        if (f & 0x2000)                 band = @"6 GHz";   /* 6 GHz channel numbers overlap the others */
+        else if (c >= 1 && c <= 14)     band = @"2.4 GHz";
+        else if (c >= 32 && c <= 177)   band = @"5 GHz";
+        else if (f & 0x10)              band = @"5 GHz";
+        else if (f & 0x8)               band = @"2.4 GHz";
+        CFRelease(net);
+    }
+    CFRelease(devs);
+    return band;
+}
 
 @implementation WTViewController {
     UISwitch *_toggle;
@@ -230,7 +277,9 @@
     BOOL fresh = st && ([[NSDate date] timeIntervalSince1970] - updated) < 10;
 
     NSString *wifi = st[@"wifi"], *usb = st[@"hotspot"], *dns = st[@"dns"];
-    _wifi.text = wifi.length ? wifi : @"Not connected";
+    NSString *band = wifi.length ? wifiBand() : nil;
+    _wifi.text = !wifi.length ? @"Not connected"
+               : band ? [NSString stringWithFormat:@"%@ · %@", wifi, band] : wifi;
     _usb.text = usb.length ? usb : @"Off";
     _dns.text = dns.length ? dns : @"–";
     NSString *vpn = st[@"vpn"];
