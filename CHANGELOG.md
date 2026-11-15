@@ -1,17 +1,8 @@
 # Changelog
 
-## 0.5.1
+## 1.0
 
-- **Includes everything in 0.5.0 below**, which wasn't published on its own: the new name,
-  Force 2.4 GHz, and near-instant moves back to the chosen band.
-- The **VPN** row shows a connected VPN even while USB sharing is off; before, it said
-  *Not connected*.
-- Shorter instructions at the bottom of the app, and the app says iPad on an iPad.
-- New screenshots.
-
-## 0.5.0
-
-- **New name: WiFi Tether & Band Switcher.**
+- **New name: WiFi Tether & Band Switcher.** On the home screen it's **Tether & Band**.
 - **Force 2.4 GHz** joins Force 5 GHz in a new **Wi-Fi band** section. Turning one on
   turns the other off.
 - **Moving back is now near-instant.** The real cause turned out to be the router: routers
@@ -22,7 +13,10 @@
   devices it disconnects and rejoins, which drops Wi-Fi for about half a second.
 - Installing restarts iOS's Wi-Fi service so the add-on loads; Wi-Fi drops for a few
   seconds.
-- Shorter texts in the app's Wi-Fi band section and a shorter 5 GHz warning.
+- The **VPN** row shows a connected VPN even while USB sharing is off; before, it said
+  *Not connected*.
+- Shorter texts in the app's Wi-Fi band section, a shorter 5 GHz warning and shorter
+  instructions. The app says iPad on an iPad.
 - Removed the 2.4 GHz blocking from 0.4.13 and other experiments that didn't do anything
   on the iPhones tested.
 - `daemon.log` stays under 1 MB, with the part before that kept in `daemon.log.old`, and

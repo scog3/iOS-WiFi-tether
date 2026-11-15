@@ -206,7 +206,7 @@ static NSString *wifiBand(void)
                       @"1. Tap the button below. Sileo opens with Share's repo address filled in.\n"
                       @"2. Tap Add Dist Repo, then Add (leave the other boxes empty).\n"
                       @"3. Install Share from that repo.\n"
-                      @"4. Come back here. WiFi Tether picks it up by itself.\n"
+                      @"4. Come back here. Tether & Band picks it up by itself.\n"
                       @"Repo address: https://aminerostane.com/repo";
     NSMutableAttributedString *as = [[NSMutableAttributedString alloc] initWithString:steps
         attributes:@{NSFontAttributeName: shareText.font, NSForegroundColorAttributeName: shareText.textColor}];
@@ -462,7 +462,7 @@ static NSString *wifiBand(void)
     _toggle.enabled = !noShare;
     if (noShare) {
         [self showState:@"Share tweak needed" color:UIColor.systemOrangeColor];
-        _detail.text = @"Install Share from Sileo to use WiFi Tether.";
+        _detail.text = @"Install Share from Sileo to use USB tethering.";
         _detail.hidden = NO;
         return;
     }

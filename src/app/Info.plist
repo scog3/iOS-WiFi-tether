@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>WiFi Tether</string>
+	<string>Tether &amp; Band</string>
 	<key>CFBundleExecutable</key>
 	<string>WiFiTether</string>
 	<key>CFBundleIcons</key>

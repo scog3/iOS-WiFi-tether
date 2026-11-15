@@ -1,6 +1,7 @@
 # WiFi Tether & Band Switcher: USB tethering and Wi-Fi band control for jailbroken iPhones and iPads
 
-**Free and open source, for iPhone and iPad on rootless jailbreaks, iOS 15 and later.** Two things in one app:
+**Free and open source, for iPhone and iPad on rootless jailbreaks, iOS 15 and later.** Two things
+in one app, called **Tether & Band** on the home screen:
 
 - **Plug-and-play USB tethering.** Plug your iPhone or iPad into a computer and the
   computer is online through its **Wi-Fi**, or through its **VPN**. No SIM or data plan
@@ -65,9 +66,10 @@ can, like a captive portal you've already signed in to on the phone.
 
 1. In Sileo, add the source `https://scog3.github.io/iOS-WiFi-tether/`
    (or open that page on the iPhone and tap **Add to Sileo**).
-2. Install **WiFi Tether & Band Switcher**. Installing restarts iOS's Wi-Fi service, so
-   Wi-Fi drops for a few seconds.
-3. For USB tethering, install the **Share** tweak: open WiFi Tether and tap **Add Share's
+2. Install **WiFi Tether & Band Switcher**. It shows up on the home screen as
+   **Tether & Band**. Installing restarts iOS's Wi-Fi service, so Wi-Fi drops for a few
+   seconds.
+3. For USB tethering, install the **Share** tweak: open **Tether & Band** and tap **Add Share's
    Repo in Sileo**. Sileo opens with the address filled in: tap **Add Dist Repo**, then
    **Add** (Sileo's *Add Source* can silently fail to add it). Then install Share from
    that repo. WiFi Tether picks it up as soon as it's installed.
@@ -81,7 +83,7 @@ install it. Install **Share** from `https://aminerostane.com/repo` as well.
 ## Use
 
 1. Connect the iPhone to **Wi-Fi**.
-2. Open **WiFi Tether** and turn the switch on. It turns Personal Hotspot on for you
+2. Open **Tether & Band** and turn **Share Wi-Fi over USB** on. It turns Personal Hotspot on for you
    and keeps Wi-Fi connected.
 3. Plug the iPhone into the computer.
 
