@@ -1,11 +1,17 @@
 # Changelog
 
+## 0.4.15
+
+- **Force 5 GHz:** fixes the background service crashing when blocking 2.4 GHz. iOS
+  writes a yes/no into an extra argument of the call; that's now given room, and the
+  answer is only read after checking it's valid. Anything that still goes wrong
+  there trips the crash guard, which turns Force 5 GHz off instead of restarting
+  over and over.
+
 ## 0.4.14
 
-- **Force 5 GHz:** blocking 2.4 GHz crashed the background service on iOS 15.8 (iOS
-  hands its answer back differently than expected). Fixed, and when the switch is
-  turned on the log records what's needed to fix it for other iOS versions. After a
-  crash it stays off until its switch is turned off and on, so sharing isn't affected.
+- **Force 5 GHz:** first attempt at fixing the crash when blocking 2.4 GHz (0.4.13).
+  Don't use Force 5 GHz on this version.
 
 ## 0.4.13
 

@@ -29,6 +29,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <errno.h>
+#include <malloc/malloc.h>
 #include "pfnat.h"
 
 #define WT_DIR      "/var/mobile/Library/WiFiTether"
@@ -932,7 +933,7 @@ static struct {
     CFStringRef  (*copyPassword)(void *);
     void         (*setPassword)(void *, CFStringRef);
     void         (*setPower)(void *, bool);
-    CFTypeRef    (*blacklist)(void *, CFDictionaryRef, CFDictionaryRef *);   /* BSS blacklist command */
+    CFTypeRef    (*blacklist)(void *, CFDictionaryRef, void *);   /* BSS blacklist command */
     CFDictionaryRef (*copyRecord)(void *);
     void         (*setProp)(void *, CFStringRef, CFTypeRef);
 } B5;
@@ -1083,35 +1084,48 @@ static void b5LogCode(const char *name, const void *fn)
     }
 }
 
-/* Two-argument call (device, request) crashed in 0.4.13: the answer comes back
- * through a third, out argument. Called as (device, request, &answer); if it
- * returns the answer instead, that's picked up too. */
-static NSDictionary *b5BlacklistCommand(NSString *command, NSDictionary *record)
+/* Only a pointer to a live heap block can be a CF object worth looking at;
+ * anything else (a flag, a stray register) is never dereferenced. */
+static int b5IsHeapObject(const void *p)
+{
+    return p && (uintptr_t)p >= 0x100000000ULL && !((uintptr_t)p & 7) && malloc_zone_from_ptr(p) != NULL;
+}
+
+/* The call takes a third argument that iOS writes a single byte to (0.4.13's
+ * crash: a byte write to whatever happened to be in that register). It gets
+ * a zeroed 8-byte slot, so whether that byte is a yes/no or the start of a
+ * pointer, nothing is written out of bounds. The answer dictionary is taken
+ * from the return value or the slot, only after checking it's a live object.
+ * All of it runs inside the crash guard. */
+static NSDictionary *b5BlacklistCommand(NSString *command, NSDictionary *record, int *flag)
 {
     NSMutableDictionary *req = [NSMutableDictionary dictionaryWithObject:command forKey:@"command"];
-    CFDictionaryRef out = NULL;
+    uint64_t slots[8] = {0};   /* room to spare, in case iOS writes more than a byte */
+    uint64_t slot;
     CFTypeRef r;
-    static int dumped;
+    NSDictionary *answer = nil;
+    static int calls;
 
     if (record)
         req[@"network"] = record;
     if ([command isEqualToString:@"kBssBlacklistSet"])
         req[@"reason"] = @8L;   /* the one reason wifid accepts for this command */
-    if (!dumped++)
+    if (!calls)
         b5LogCode("WiFiDeviceClientBssBlacklistCommandAndCopyResponse", (const void *)B5.blacklist);
     b5GuardBegin("blacklist");
-    r = B5.blacklist(B5.dev, (__bridge CFDictionaryRef)req, &out);
+    r = B5.blacklist(B5.dev, (__bridge CFDictionaryRef)req, slots);
+    slot = slots[0];
+    if (calls++ < 3)
+        NSLog(@"wifitetherd: 5 GHz: %@ returned %p, third argument now 0x%llx", command, r, slot);
+    if (b5IsHeapObject(r) && CFGetTypeID(r) == CFDictionaryGetTypeID())
+        answer = CFBridgingRelease(r);
+    else if (b5IsHeapObject((const void *)(uintptr_t)slot) &&
+             CFGetTypeID((CFTypeRef)(uintptr_t)slot) == CFDictionaryGetTypeID())
+        answer = CFBridgingRelease((CFTypeRef)(uintptr_t)slot);
+    if (flag)
+        *flag = (int)(slot & 0xff);
     b5GuardEnd();
-    if (dumped == 1 || !out)
-        NSLog(@"wifitetherd: 5 GHz: %@ returned %p, answer %p", command, r, out);
-    if (out && CFGetTypeID(out) == CFDictionaryGetTypeID())
-        return CFBridgingRelease(out);
-    if (out)
-        CFRelease(out);
-    /* Returned instead: only touched if it looks like an object. */
-    if (r && (uintptr_t)r >= 0x100000000ULL && !((uintptr_t)r & 7) && CFGetTypeID(r) == CFDictionaryGetTypeID())
-        return CFBridgingRelease(r);
-    return nil;
+    return answer;
 }
 
 /* Blocks these 2.4 GHz radios (or renews the block). Returns 1 if iOS took them. */
@@ -1122,7 +1136,8 @@ static int b5Block(NSArray *records, NSString *ssid)
     if (!B5.blacklist || !records.count)
         return 0;
     for (NSDictionary *rec in records) {
-        NSDictionary *resp = b5BlacklistCommand(@"kBssBlacklistSet", rec);
+        int flag = 0;
+        NSDictionary *resp = b5BlacklistCommand(@"kBssBlacklistSet", rec, &flag);
         NSArray *nets = [resp[@"networks"] isKindOfClass:NSArray.class] ? resp[@"networks"] : nil;
         NSString *mine = b5Str(rec, @"BSSID");
         int found = 0;
@@ -1134,6 +1149,8 @@ static int b5Block(NSArray *records, NSString *ssid)
                 (!b && name && [name isEqualToString:ssid]))
                 found = 1;
         }
+        if (!resp && flag == 1)
+            found = 1;   /* no answer dictionary, but iOS said yes */
         took += found;
         if (!took && !logged++ && g_b5Lock != 1) {
             NSString *d = [[resp.description componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]
@@ -1166,7 +1183,7 @@ static void b5Unblock(const char *why)
     NSLog(@"wifitetherd: 5 GHz: unblocking 2.4 GHz (%s)", why);
     if (B5.blacklist && B5.dev)
         for (NSDictionary *rec in g_b5Blocked)
-            b5BlacklistCommand(@"kBssBlacklistClear", rec);
+            b5BlacklistCommand(@"kBssBlacklistClear", rec, NULL);
     g_b5Blocked = nil;
     g_b5BlockedSSID = nil;
 }
