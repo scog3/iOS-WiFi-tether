@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1
+
+- **Includes everything in 0.5.0 below**, which wasn't published on its own: the new name,
+  Force 2.4 GHz, and near-instant moves back to the chosen band.
+- The **VPN** row shows a connected VPN even while USB sharing is off; before, it said
+  *Not connected*.
+- Shorter instructions at the bottom of the app.
+- New screenshots.
+
 ## 0.5.0
 
 - **New name: WiFi Tether & Band Switcher.**

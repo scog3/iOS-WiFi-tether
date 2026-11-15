@@ -20,8 +20,9 @@ def md(s):
 # Where the repo is published (from the control file), for the screenshots
 base = re.search(r"^SileoDepiction: *(\S+/)depiction\.json",
                  open("packaging/control", encoding="utf-8").read(), re.M).group(1)
-screenshots = [("screenshots/sharing-vpn.png", "Sharing the iPhone's VPN over USB"),
-               ("screenshots/sharing-wifi.png", "Sharing the iPhone's Wi-Fi over USB")]
+screenshots = [("screenshots/tethering-5ghz.png", "Sharing Wi-Fi over USB with Force 5 GHz on"),
+               ("screenshots/tethering-vpn.png", "Sharing the iPhone's VPN over USB"),
+               ("screenshots/band-switch.png", "Force 2.4 GHz on its own, with sharing off")]
 
 details = (
     "**USB tethering, plus a Wi-Fi band switcher.** Plug your iPhone into a computer and the "
@@ -36,7 +37,8 @@ details = (
     "carries. Through a VPN, as fast as the VPN runs on the phone.\n"
     "- **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected, handles airplane mode.\n"
     "- **Force 5 GHz or 2.4 GHz.** Keeps the iPhone on the band you pick, even when the router "
-    "moves it. Works on its own, without tethering or Share. Moving back is near-instant on "
+    "moves it. Handy with routers that won't let you split the bands, like BT's Smart Hub 2. "
+    "Works on its own, without tethering or Share. Moving back is near-instant on "
     "iPhone X and older; newer iPhones drop Wi-Fi for about half a second each time.\n"
     "- **No battery drain when it's off.**\n"
     "- **Free and open source** (MIT).\n\n"

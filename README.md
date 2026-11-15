@@ -6,12 +6,13 @@
   online through the iPhone's **Wi-Fi**, or through its **VPN**. No SIM, no data plan,
   nothing to set up on the computer.
 - **Wi-Fi band switcher.** Keeps the iPhone on **5 GHz** (faster) or **2.4 GHz**
-  (reaches further), even when the router tries to move it. Works on its own, without
-  tethering.
+  (reaches further), even when the router tries to move it. Handy with routers that won't
+  let you split the bands, like BT's Smart Hub 2. Works on its own, without tethering.
 
 <p align="center">
-  <img src="screenshots/sharing-vpn.png" width="260" alt="WiFi Tether sharing the iPhone's VPN over USB">
-  <img src="screenshots/sharing-wifi.png" width="260" alt="WiFi Tether sharing the iPhone's Wi-Fi over USB">
+  <img src="screenshots/tethering-5ghz.png" width="240" alt="Sharing Wi-Fi over USB with Force 5 GHz on">
+  <img src="screenshots/tethering-vpn.png" width="240" alt="Sharing the iPhone's VPN over USB">
+  <img src="screenshots/band-switch.png" width="240" alt="Force 2.4 GHz on its own, with sharing off">
 </p>
 
 ## Features
@@ -114,8 +115,11 @@ back:
   it disconnects and rejoins instead. Wi-Fi drops for about half a second each time.
 
 If the band you picked is too weak to connect to where you are, it waits and tries again
-later instead of leaving you without Wi-Fi. If your router can give each band its own
-network name, that's the simplest fix of all.
+later instead of leaving you without Wi-Fi.
+
+It's made for routers that won't let you give each band its own network name or turn
+band steering off, like BT's Smart Hub 2 and other ISP hubs. If your router can split the
+bands, that's the simplest fix of all.
 
 Tested on one iPhone 6s (iOS 15.8.5) and one router. What was tried along the way, what
 worked and what didn't: [docs/band-switching-research.md](docs/band-switching-research.md).

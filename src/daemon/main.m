@@ -2063,6 +2063,10 @@ static void reconcile(void)
         if (!en || !up.ok || !lan.ok) {
             teardown();
             writeVpnIf("");
+            if (up.ok) {   /* the app shows a connected VPN even while it isn't shared */
+                WTIf v = findVPN(&up);
+                st[@"vpn"] = v.ok ? [NSString stringWithFormat:@"%s (%@)", v.name, ipStr(v.ip)] : @"";
+            }
             if (!en)
                 state = share ? @"off" : @"noshare";
             else if (air == 1)

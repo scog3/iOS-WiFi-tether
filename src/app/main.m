@@ -185,14 +185,10 @@ static NSString *wifiBand(void)
     _band5Info = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
 
     UILabel *help = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
-    help.text = @"1. Connect this iPhone to Wi-Fi.\n"
-                @"2. Turn the switch on. It turns Personal Hotspot on for you and keeps Wi-Fi connected.\n"
-                @"3. Plug the iPhone into the computer with a USB cable.\n\n"
-                @"The computer gets internet through this iPhone's Wi-Fi, or through its VPN when one is connected. "
-                @"Leave the switch on and it stays ready, even after re-jailbreaking. "
-                @"Switch it off to turn Personal Hotspot off; the background services then sleep and use no battery. "
-                @"If airplane mode is on, switching on turns it off, and switching off turns it back on.\n\n"
-                @"USB sharing needs the Share tweak. The Wi-Fi band switches work without it.";
+    help.text = @"USB tethering: connect this iPhone to Wi-Fi, turn on Share Wi-Fi over USB, then plug the "
+                @"iPhone into the computer. The computer goes online through this iPhone's Wi-Fi, or its VPN "
+                @"when one is connected. Turning sharing off turns Personal Hotspot off.\n\n"
+                @"USB tethering needs the Share tweak; the Wi-Fi band switches don't.";
 
     /* Share tweak missing: say so first, with a button that opens Sileo. */
     UILabel *shareTitle = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
@@ -444,6 +440,8 @@ static NSString *wifiBand(void)
         _vpn.text = @"Not connected";
     else if ([st[@"vpnShared"] boolValue])
         _vpn.text = [NSString stringWithFormat:@"Shared via %@", vpn];
+    else if (!_toggle.on)
+        _vpn.text = [NSString stringWithFormat:@"Connected: %@", vpn];
     else
         _vpn.text = [NSString stringWithFormat:@"%@, not shared yet", vpn];
     _detail.text = @"";

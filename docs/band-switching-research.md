@@ -40,7 +40,7 @@ Newest first. The 0.4.18 builds were development builds that led to 0.5.0.
 
 | Version | What changed | Result |
 | --- | --- | --- |
-| 0.5.0 | Force 2.4 GHz switch, one switch on at a time; experiments that did nothing removed | Released |
+| 0.5.0 | Force 2.4 GHz switch, one switch on at a time; experiments that did nothing removed | Released as 0.5.1 |
 | 0.4.18 dev 9 | Status line in the log every 5 minutes; the scan that learns the radio gives up after 3 busy refusals | Worked |
 | 0.4.18 dev 8 | Add-on inside `wifid` asks for iOS's own hand-over to the forced band; disconnect-and-join kept as the fallback | Worked: 278 ms, no disconnect |
 | 0.4.18 dev 7 | Checks 0.1 s after a move; a failed move noticed in 1 s instead of 10; up to 3 tries, 2 and 8 s apart; no 30 s cooldown; empty scans retried in 5 s; the radio remembered until it fails | Back on 5 GHz in 0.66 s, about 0.45 s without Wi-Fi |
