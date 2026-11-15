@@ -1,8 +1,22 @@
 # Changelog
 
+## 0.4.9
+
+- New **Keep Wi-Fi on 5 GHz** switch (off by default). Once an iPhone has joined a
+  router's 2.4 GHz radio it stays there, even right next to the router, because iOS
+  only looks for another radio when the signal gets weak; iOS has no setting to pick
+  the band. With the switch on, WiFi Tether moves the iPhone to the same network's
+  5 GHz radio, and moves it back whenever iOS drifts to 2.4 GHz. Works with sharing
+  off too.
+- It stays on 2.4 GHz when 5 GHz is too weak where you are, and if iOS keeps drifting
+  back it waits a few minutes before trying again, so Wi-Fi doesn't keep dropping.
+  The switch shows what it's doing. New, so please report how it goes.
+
 ## 0.4.8
 
 - The **Wi-Fi** row shows which band the iPhone is on, e.g. *192.168.1.133 · 5 GHz*.
+  On 2.4 GHz everything is a lot slower, the computer included; many routers decide
+  the band themselves and can leave the iPhone on 2.4 GHz.
 
 ## 0.4.7
 

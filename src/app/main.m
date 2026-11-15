@@ -11,6 +11,7 @@
 #define WT_DIR      @"/var/mobile/Library/WiFiTether"
 #define WT_ENABLED  WT_DIR @"/enabled"
 #define WT_STATUS   WT_DIR @"/status.plist"
+#define WT_PREFER5  WT_DIR @"/prefer-5ghz"
 #define WT_NOTIFY   "com.wifitether.changed"
 
 @interface WTViewController : UIViewController
@@ -72,6 +73,8 @@ static NSString *wifiBand(void)
     UILabel  *_dns;
     UILabel  *_vpn;
     UIView   *_shareCard;   /* shown while the Share tweak isn't installed */
+    UISwitch *_band5Toggle; /* keep Wi-Fi on 5 GHz */
+    UILabel  *_band5Info;
     NSTimer  *_timer;
     unsigned  _ticks;
 }
@@ -150,6 +153,15 @@ static NSString *wifiBand(void)
     _dns = [self labelWithSize:15 weight:UIFontWeightMedium color:UIColor.labelColor];
     _vpn = [self labelWithSize:15 weight:UIFontWeightMedium color:UIColor.labelColor];
 
+    /* Keep Wi-Fi on 5 GHz: separate from sharing, works with it off */
+    UILabel *band5Label = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
+    band5Label.text = @"Keep Wi-Fi on 5 GHz";
+    _band5Toggle = [UISwitch new];
+    [_band5Toggle addTarget:self action:@selector(band5Toggled:) forControlEvents:UIControlEventValueChanged];
+    UIStackView *band5Row = [[UIStackView alloc] initWithArrangedSubviews:@[band5Label, _band5Toggle]];
+    band5Row.alignment = UIStackViewAlignmentCenter;
+    _band5Info = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
+
     UILabel *help = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
     help.text = @"1. Connect this iPhone to Wi-Fi.\n"
                 @"2. Turn the switch on. It turns Personal Hotspot on for you and keeps Wi-Fi connected.\n"
@@ -200,6 +212,7 @@ static NSString *wifiBand(void)
                      [self row:@"Hotspot / USB" value:_usb],
                      [self row:@"DNS" value:_dns],
                      [self row:@"VPN" value:_vpn]]],
+        [self card:@[band5Row, _band5Info]],
         help,
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
@@ -259,6 +272,63 @@ static NSString *wifiBand(void)
     return s == nil || ![s hasPrefix:@"0"];
 }
 
+- (BOOL)prefer5Setting
+{
+    NSString *s = [NSString stringWithContentsOfFile:WT_PREFER5 encoding:NSUTF8StringEncoding error:nil];
+    return [s hasPrefix:@"1"];
+}
+
+/* What the 5 GHz switch is doing, under it. */
+- (void)refreshBand5:(NSDictionary *)st fresh:(BOOL)fresh
+{
+    if (!_band5Toggle.isTracking)
+        _band5Toggle.on = [self prefer5Setting];
+    NSString *s = fresh ? st[@"band5"] : nil;
+    int rssi = [st[@"band5rssi"] intValue];
+    NSString *dbm = rssi ? [NSString stringWithFormat:@" (\u2212%d dBm)", -rssi] : @"";
+    NSString *text;
+    if (!_band5Toggle.on || [s isEqualToString:@"off"])
+        text = @"Moves this iPhone from your Wi-Fi's slow 2.4 GHz band to its faster 5 GHz band, and keeps it "
+               @"there. iOS has no setting for this. Works with sharing off too.";
+    else if ([s isEqualToString:@"on5"])
+        text = [NSString stringWithFormat:@"On 5 GHz%@.", dbm];
+    else if ([s isEqualToString:@"switching"])
+        text = @"Moving to 5 GHz…";
+    else if ([s isEqualToString:@"searching"])
+        text = @"On 2.4 GHz. Looking for your network's 5 GHz…";
+    else if ([s isEqualToString:@"no5"])
+        text = @"Your network's 5 GHz isn't in range here, so this iPhone stays on 2.4 GHz. Checked again every few minutes.";
+    else if ([s isEqualToString:@"weak"])
+        text = [NSString stringWithFormat:@"Your network's 5 GHz is too weak here%@, so this iPhone stays on 2.4 GHz.", dbm];
+    else if ([s isEqualToString:@"flapping"])
+        text = @"iOS keeps going back to 2.4 GHz, probably because 5 GHz is weak here. Trying again in a few minutes.";
+    else if ([s isEqualToString:@"failed"])
+        text = @"Couldn't move to 5 GHz. Trying again in a couple of minutes; details are in daemon.log.";
+    else if ([s isEqualToString:@"nowifi"])
+        text = @"Not connected to Wi-Fi.";
+    else if ([s isEqualToString:@"crashed"])
+        text = @"Stopped: this crashed WiFi Tether's background service on this iPhone. Switch it off and on "
+               @"to try again, and please send daemon.log.";
+    else if ([s isEqualToString:@"unsupported"])
+        text = @"Not available on this iPhone.";
+    else if ([s isEqualToString:@"unknown"])
+        text = @"Can't tell which band this iPhone is on.";
+    else
+        text = @"Starting…";
+    _band5Info.text = text;
+}
+
+- (void)band5Toggled:(UISwitch *)sender
+{
+    [[NSFileManager defaultManager] createDirectoryAtPath:WT_DIR withIntermediateDirectories:YES
+                                               attributes:nil error:nil];
+    [(sender.on ? @"1" : @"0") writeToFile:WT_PREFER5 atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    notify_post(WT_NOTIFY);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self refresh];
+    });
+}
+
 - (void)showState:(NSString *)text color:(UIColor *)color
 {
     _state.text = text;
@@ -275,6 +345,7 @@ static NSString *wifiBand(void)
     NSDictionary *st = [NSDictionary dictionaryWithContentsOfFile:WT_STATUS];
     double updated = [st[@"updated"] doubleValue];
     BOOL fresh = st && ([[NSDate date] timeIntervalSince1970] - updated) < 10;
+    [self refreshBand5:st fresh:fresh];
 
     NSString *wifi = st[@"wifi"], *usb = st[@"hotspot"], *dns = st[@"dns"];
     NSString *band = wifi.length ? wifiBand() : nil;

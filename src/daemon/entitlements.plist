@@ -15,6 +15,11 @@
     <true/>
     <key>com.apple.private.corewifi.internal</key>
     <true/>
+    <!-- Keep Wi-Fi on 5 GHz: read the saved Wi-Fi password to join the 5 GHz radio -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>apple</string>
+    </array>
     <!-- Airplane mode (RadiosPreferences writes com.apple.radios.plist) -->
     <key>com.apple.SystemConfiguration.SCPreferences-write-access</key>
     <array>

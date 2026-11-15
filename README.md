@@ -23,6 +23,9 @@ Plug your iPhone into a computer and the computer is online through the iPhone's
   it's as fast as the VPN runs on the phone.
 - **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected and turns airplane
   mode off if needed. Switch it off and everything goes back to how it was.
+- **Keeps Wi-Fi on 5 GHz.** Optional switch: moves the iPhone off slow 2.4 GHz onto
+  your router's 5 GHz radio and keeps it there. iOS has no setting for this, and it's
+  useful even when you're not tethering.
 - **No SIM or data plan needed.** It shares Wi-Fi, not mobile data.
 - **No battery drain when it's off.** The background services sleep.
 - **Free and open source** (MIT), unlike paid tweaks such as Tethera and TetherMe.
@@ -130,9 +133,8 @@ by Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's n
   `ipconfig /renew` in Command Prompt does the same.
 - **Slow?** The computer gets about what the iPhone's own Wi-Fi gets. The **Wi-Fi** row
   in the app shows the band: on **2.4 GHz** everything is a lot slower than on 5 GHz.
-  Many routers use one name for both bands and choose the band themselves; turning
-  Wi-Fi off and on near the router often moves the iPhone back to 5 GHz, and some
-  routers can give the 5 GHz band its own name.
+  Turn on **Keep Wi-Fi on 5 GHz**; the text under it says what it found (for example
+  that 5 GHz is too weak where you are).
 - **Testing while the computer is also on Wi-Fi.** The computer may keep using
   its own Wi-Fi. Turn the computer's Wi-Fi off to test.
 - **Log and status files** are on the iPhone in `/var/mobile/Library/WiFiTether/`
@@ -178,6 +180,14 @@ address but has no route to the internet. WiFi Tether's background service
 
    While the switch is off, `wifitetherd` and the VPN helper wait for the notification
    `com.wifitether.changed` instead of checking every second.
+
+6. **Keep Wi-Fi on 5 GHz.** An iPhone only looks for a better access point once its
+   signal drops below −70 dBm, so once it's on a router's 2.4 GHz radio it stays there.
+   While this switch is on, `wifitetherd` checks every 10 seconds; on 2.4 GHz it scans,
+   and if the same network has a 5 GHz radio at −72 dBm or better it joins that radio
+   (MobileWiFi `WiFiDeviceClientScanAsync` / `WiFiDeviceClientAssociateAsync`, with the
+   network's saved password). At most 3 moves in 15 minutes, so a weak 5 GHz signal
+   can't make Wi-Fi flap. It runs whether sharing is on or off.
 
 Everything is removed again when you switch sharing off or uninstall.
 

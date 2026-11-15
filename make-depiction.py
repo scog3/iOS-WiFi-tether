@@ -34,6 +34,8 @@ details = (
     "- **Full speed.** No cap: about what the iPhone itself gets, up to what the USB port "
     "carries. Through a VPN, as fast as the VPN runs on the phone.\n"
     "- **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected, handles airplane mode.\n"
+    "- **Keeps Wi-Fi on 5 GHz.** Optional switch that moves the iPhone off slow 2.4 GHz onto "
+    "your router's 5 GHz radio and keeps it there. Useful even without tethering.\n"
     "- **No battery drain when it's off.**\n"
     "- **Free and open source** (MIT).\n\n"
     "Needs the **Share** tweak: the app has a button that adds its repo in Sileo. "
