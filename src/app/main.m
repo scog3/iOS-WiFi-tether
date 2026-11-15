@@ -109,6 +109,18 @@ static NSString *wifiBand(void)
     return card;
 }
 
+/* A grey section title above the cards, like Settings. */
+- (UILabel *)sectionHeader:(NSString *)text
+{
+    UILabel *l = [self labelWithSize:13 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
+    NSMutableParagraphStyle *p = [NSMutableParagraphStyle new];
+    p.firstLineHeadIndent = 16;
+    p.headIndent = 16;
+    l.attributedText = [[NSAttributedString alloc] initWithString:text.uppercaseString attributes:@{
+        NSFontAttributeName: l.font, NSForegroundColorAttributeName: l.textColor, NSParagraphStyleAttributeName: p}];
+    return l;
+}
+
 - (UIView *)row:(NSString *)title value:(UILabel *)value
 {
     UILabel *t = [self labelWithSize:15 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
@@ -129,7 +141,8 @@ static NSString *wifiBand(void)
     UILabel *title = [self labelWithSize:34 weight:UIFontWeightBold color:UIColor.labelColor];
     title.text = @"WiFi Tether";
     UILabel *subtitle = [self labelWithSize:15 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
-    subtitle.text = @"Shares this iPhone's Wi-Fi connection with a computer over USB.";
+    subtitle.text = @"Shares this iPhone's Wi-Fi or VPN with a computer over USB, and can force Wi-Fi onto "
+                    @"fast 5 GHz.";
 
     UILabel *toggleLabel = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
     toggleLabel.text = @"Share Wi-Fi over USB";
@@ -171,13 +184,13 @@ static NSString *wifiBand(void)
                 @"Leave the switch on and it stays ready, even after re-jailbreaking. "
                 @"Switch it off to turn Personal Hotspot off; the background services then sleep and use no battery. "
                 @"If airplane mode is on, switching on turns it off, and switching off turns it back on.\n\n"
-                @"Needs the Share tweak.";
+                @"USB sharing needs the Share tweak. Force 5 GHz Wi-Fi works without it.";
 
     /* Share tweak missing: say so first, with a button that opens Sileo. */
     UILabel *shareTitle = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
-    shareTitle.text = @"Install the Share tweak first";
+    shareTitle.text = @"USB sharing needs the Share tweak";
     UILabel *shareText = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
-    NSString *steps = @"WiFi Tether needs Share to turn on Personal Hotspot without a SIM.\n"
+    NSString *steps = @"Share turns on Personal Hotspot without a SIM. Force 5 GHz Wi-Fi below works without it.\n"
                       @"1. Tap the button below. Sileo opens with Share's repo address filled in.\n"
                       @"2. Tap Add Dist Repo, then Add (leave the other boxes empty).\n"
                       @"3. Install Share from that repo.\n"
@@ -204,21 +217,30 @@ static NSString *wifiBand(void)
     _shareCard = [self card:@[shareTitle, shareText, getShare]];
     _shareCard.hidden = YES;
 
+    UILabel *tetherHeader = [self sectionHeader:@"USB tethering"];
+    UILabel *band5Header = [self sectionHeader:@"5 GHz Wi-Fi"];
+    UIView *statusCard = [self card:@[stateRow, _detail,
+                                      [self row:@"Wi-Fi" value:_wifi],
+                                      [self row:@"Hotspot / USB" value:_usb],
+                                      [self row:@"DNS" value:_dns],
+                                      [self row:@"VPN" value:_vpn]]];
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
         title, subtitle,
+        tetherHeader,
         _shareCard,
         [self card:@[toggleRow]],
-        [self card:@[stateRow, _detail,
-                     [self row:@"Wi-Fi" value:_wifi],
-                     [self row:@"Hotspot / USB" value:_usb],
-                     [self row:@"DNS" value:_dns],
-                     [self row:@"VPN" value:_vpn]]],
+        statusCard,
+        band5Header,
         [self card:@[band5Row, _band5Info]],
         help,
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 16;
     [stack setCustomSpacing:6 afterView:title];
+    [stack setCustomSpacing:24 afterView:subtitle];
+    [stack setCustomSpacing:6 afterView:tetherHeader];
+    [stack setCustomSpacing:28 afterView:statusCard];
+    [stack setCustomSpacing:6 afterView:band5Header];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
 
     UIScrollView *scroll = [UIScrollView new];

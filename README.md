@@ -1,8 +1,12 @@
-# WiFi Tether: share a jailbroken iPhone's Wi-Fi over USB
+# WiFi Tether: USB tethering and Force 5 GHz Wi-Fi for jailbroken iPhones
 
-**Free, open-source, plug-and-play USB tethering for rootless jailbreaks (iOS 15 and later).**
-Plug your iPhone into a computer and the computer is online through the iPhone's
-**Wi-Fi**, or through its **VPN**. No SIM, no data plan, nothing to set up on the computer.
+**Free and open source, for rootless jailbreaks on iOS 15 and later.** Two things in one app:
+
+- **Plug-and-play USB tethering.** Plug your iPhone into a computer and the computer is
+  online through the iPhone's **Wi-Fi**, or through its **VPN**. No SIM, no data plan,
+  nothing to set up on the computer.
+- **Force 5 GHz Wi-Fi.** Keeps the iPhone on your router's fast 5 GHz radio instead of
+  slow 2.4 GHz. iOS has no setting for this. Works on its own, without tethering.
 
 <p align="center">
   <img src="screenshots/sharing-vpn.png" width="260" alt="WiFi Tether sharing the iPhone's VPN over USB">
@@ -23,9 +27,9 @@ Plug your iPhone into a computer and the computer is online through the iPhone's
   it's as fast as the VPN runs on the phone.
 - **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected and turns airplane
   mode off if needed. Switch it off and everything goes back to how it was.
-- **Force 5 GHz.** Optional switch that keeps the iPhone on your router's faster 5 GHz
-  radio instead of slow 2.4 GHz, even where iOS would switch back. iOS has no setting
-  for this, and it's useful even when you're not tethering.
+- **Force 5 GHz.** Keeps the iPhone on your router's faster 5 GHz radio instead of slow
+  2.4 GHz, even where iOS would switch back. Works on its own, without tethering or the
+  Share tweak.
 - **No SIM or data plan needed.** It shares Wi-Fi, not mobile data.
 - **No battery drain when it's off.** The background services sleep.
 - **Free and open source** (MIT), unlike paid tweaks such as Tethera and TetherMe.
@@ -40,10 +44,11 @@ can, like a captive portal you've already signed in to on the phone.
 ## What you need
 
 - A **rootless** jailbreak on iOS 15 or later (for example palera1n or Dopamine)
-- The **[Share](https://github.com/amineross/share)** tweak by amineross, from the repo
-  `https://aminerostane.com/repo`. Share turns on Personal Hotspot without a SIM.
-  WiFi Tether adds the internet connection on top.
-- A USB cable, and a computer that supports iPhone USB tethering
+- For USB tethering: the **[Share](https://github.com/amineross/share)** tweak by
+  amineross, from the repo `https://aminerostane.com/repo`. Share turns on Personal
+  Hotspot without a SIM; WiFi Tether adds the internet connection on top.
+  **Force 5 GHz** doesn't need it.
+- For USB tethering: a USB cable, and a computer that supports iPhone USB tethering
   (Windows needs Apple's iPhone drivers, which come with iTunes or Apple Devices;
   macOS and most Linux distributions work out of the box)
 
@@ -54,7 +59,7 @@ can, like a captive portal you've already signed in to on the phone.
 1. In Sileo, add the source `https://scog3.github.io/iOS-WiFi-tether/`
    (or open that page on the iPhone and tap **Add to Sileo**).
 2. Install **WiFi Tether**.
-3. Install the **Share** tweak, which it needs: open WiFi Tether and tap **Add Share's
+3. For USB tethering, install the **Share** tweak: open WiFi Tether and tap **Add Share's
    Repo in Sileo**. Sileo opens with the address filled in: tap **Add Dist Repo**, then
    **Add** (Sileo's *Add Source* can silently fail to add it). Then install Share from
    that repo. WiFi Tether picks it up as soon as it's installed.

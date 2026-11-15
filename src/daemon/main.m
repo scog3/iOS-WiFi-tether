@@ -1056,11 +1056,17 @@ static int b5CurrentBand(void)
 }
 
 static void b5JoinNow(void);
+static double g_b5T0;   /* when this try started, for the log */
 
-/* A few seconds after a join: did it stick? Joining while connected never
- * does (iOS keeps the connection it has), so every join disconnects first;
- * if iOS's own auto-join wins the race back to 2.4 GHz, try once more. */
-static void b5Landed(void)
+static int b5Ms(void)
+{
+    return (int)((CFAbsoluteTimeGetCurrent() - g_b5T0) * 1000);
+}
+
+/* After a join: watch for up to 10 seconds whether the iPhone ends up on
+ * 5 GHz. If iOS's own auto-join wins the race back to 2.4 GHz, try again
+ * (3 tries per move). */
+static void b5WatchLanding(int checks)
 {
     int band = b5CurrentBand();
 
@@ -1069,17 +1075,23 @@ static void b5Landed(void)
         return;
     }
     if (band >= 5) {
-        NSLog(@"wifitetherd: 5 GHz: on 5 GHz");
+        NSLog(@"wifitetherd: 5 GHz: on 5 GHz (%d ms after disconnecting)", b5Ms());
         g_b5State = @"on5";
         b5EndMove();
         return;
     }
-    if (g_b5JoinTries < 2) {
-        NSLog(@"wifitetherd: 5 GHz: iOS went back to %s; trying once more", band < 0 ? "no Wi-Fi" : "2.4 GHz");
+    if (checks < 20) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            b5WatchLanding(checks + 1);
+        });
+        return;
+    }
+    if (g_b5JoinTries < 3) {
+        NSLog(@"wifitetherd: 5 GHz: ended up on %s; trying again", band < 0 ? "no Wi-Fi" : "2.4 GHz");
         b5JoinNow();
         return;
     }
-    NSLog(@"wifitetherd: 5 GHz: iOS went back to %s again; trying later", band < 0 ? "no Wi-Fi" : "2.4 GHz");
+    NSLog(@"wifitetherd: 5 GHz: ended up on %s 3 times; trying later", band < 0 ? "no Wi-Fi" : "2.4 GHz");
     g_b5State = @"searching";
     g_b5NextTry = time(NULL) + 60;
     b5EndMove();
@@ -1089,17 +1101,43 @@ static void b5Joined(void *dev, void *net, CFDictionaryRef info, void *err, void
 {
     b5GuardEnd();
     if (err) {
-        NSLog(@"wifitetherd: 5 GHz: iOS couldn't join the 5 GHz radio (error %p)", err);
+        NSLog(@"wifitetherd: 5 GHz: iOS couldn't join the 5 GHz radio (error %p, %d ms)", err, b5Ms());
         g_b5State = @"failed";
         g_b5NextTry = time(NULL) + 120;
         b5EndMove();
         return;
     }
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ b5Landed(); });
+    NSLog(@"wifitetherd: 5 GHz: join answered after %d ms", b5Ms());
+    b5WatchLanding(0);
 }
 
-/* Disconnect, then join the 5 GHz radio straight away (before auto-join picks
- * 2.4 GHz again). */
+/* Join only once the disconnect has actually happened: a join sent while
+ * still connected is ignored, and auto-join then reconnects to 2.4 GHz. */
+static void b5JoinWhenDisconnected(int waited)
+{
+    void *cur;
+
+    if (!g_b5Running || !g_b5Joining) {
+        b5EndMove();
+        return;
+    }
+    cur = B5.copyCurrent(B5.dev);
+    if (cur)
+        CFRelease(cur);
+    if (cur && waited < 3000) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 40 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            b5JoinWhenDisconnected(waited + 40);
+        });
+        return;
+    }
+    NSLog(@"wifitetherd: 5 GHz: try %d: %s after %d ms; joining 5 GHz", g_b5JoinTries,
+          cur ? "still connected" : "disconnected", b5Ms());
+    b5GuardBegin("join");
+    B5.join(B5.dev, g_b5Joining, b5Joined, NULL);
+}
+
+/* Disconnect, then join the 5 GHz radio the moment the disconnect is done
+ * (before auto-join picks 2.4 GHz again). */
 static void b5JoinNow(void)
 {
     time_t now = time(NULL);
@@ -1109,14 +1147,10 @@ static void b5JoinNow(void)
     g_b5BusySince = g_b5LastJoin = now;
     g_b5Rescued = 0;
     g_b5QuietUntil = now + 40;   /* the brief disconnect isn't a Wi-Fi drop to fix */
+    g_b5T0 = CFAbsoluteTimeGetCurrent();
     if (B5.disassociate)
         B5.disassociate(B5.dev);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(300 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
-        if (!g_b5Joining)
-            return;
-        b5GuardBegin("join");
-        B5.join(B5.dev, g_b5Joining, b5Joined, NULL);
-    });
+    b5JoinWhenDisconnected(0);
 }
 
 static void b5Join(void *net, int rssi)

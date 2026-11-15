@@ -24,9 +24,10 @@ screenshots = [("screenshots/sharing-vpn.png", "Sharing the iPhone's VPN over US
                ("screenshots/sharing-wifi.png", "Sharing the iPhone's Wi-Fi over USB")]
 
 details = (
-    "**Plug-and-play USB tethering.** Plug your iPhone into a computer and the computer is "
-    "online through the iPhone's **Wi-Fi**, or through its **VPN**. No SIM, no data plan, "
-    "nothing to set up on the computer.\n\n"
+    "**USB tethering, plus Force 5 GHz Wi-Fi.** Plug your iPhone into a computer and the "
+    "computer is online through the iPhone's **Wi-Fi**, or through its **VPN**. No SIM, no data "
+    "plan, nothing to set up on the computer. And a switch that keeps the iPhone's Wi-Fi on fast "
+    "**5 GHz**, which iOS has no setting for.\n\n"
     "- **Plug and play.** Leave the switch on and just plug in. If Windows misses the "
     "connection, WiFi Tether retries by itself.\n"
     "- **Shares your VPN.** VPN apps or the built-in VPN: the computer goes through it too, DNS included.\n"
@@ -34,11 +35,12 @@ details = (
     "- **Full speed.** No cap: about what the iPhone itself gets, up to what the USB port "
     "carries. Through a VPN, as fast as the VPN runs on the phone.\n"
     "- **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected, handles airplane mode.\n"
-    "- **Force 5 GHz.** Optional switch that keeps the iPhone on your router's faster 5 GHz "
-    "radio instead of slow 2.4 GHz, even where iOS would switch back. Useful even without tethering.\n"
+    "- **Force 5 GHz.** Keeps the iPhone on your router's faster 5 GHz radio instead of slow "
+    "2.4 GHz, even where iOS would switch back. Works on its own, without tethering or Share.\n"
     "- **No battery drain when it's off.**\n"
     "- **Free and open source** (MIT).\n\n"
-    "Needs the **Share** tweak: the app has a button that adds its repo in Sileo. "
+    "USB tethering needs the **Share** tweak (the app has a button that adds its repo in Sileo); "
+    "Force 5 GHz works without it. "
     "Rootless jailbreaks, iOS 15 and later.\n\n"
     "[Source code on GitHub](https://github.com/scog3/iOS-WiFi-tether)"
 )

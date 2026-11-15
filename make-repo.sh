@@ -45,7 +45,7 @@ cat > "$R/index.html" <<'EOF'
 a.b{display:inline-block;background:#007aff;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;font-weight:600}
 code{background:#f0f0f0;padding:2px 5px;border-radius:4px}</style></head><body>
 <h1>WiFi Tether</h1>
-<p>Plug-and-play USB tethering: share a jailbroken iPhone's Wi-Fi, or its VPN, with a computer. No SIM or data plan, nothing to set up on the computer. Rootless jailbreaks, iOS 15 and later.</p>
+<p>Plug-and-play USB tethering of a jailbroken iPhone's Wi-Fi or VPN, plus a switch that forces Wi-Fi onto fast 5 GHz. No SIM or data plan, nothing to set up on the computer. Rootless jailbreaks, iOS 15 and later.</p>
 <p style="display:flex;gap:10px"><img src="screenshots/sharing-vpn.png" alt="Sharing the iPhone's VPN over USB" style="width:calc(50% - 5px);max-width:220px;border-radius:10px"><img src="screenshots/sharing-wifi.png" alt="Sharing the iPhone's Wi-Fi over USB" style="width:calc(50% - 5px);max-width:220px;border-radius:10px"></p>
 <p><a class="b" id="add" href="#">Add to Sileo</a></p>
 <p>Or add this source in Sileo by hand: <code id="url"></code></p>
