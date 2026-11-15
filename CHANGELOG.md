@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.10
+
+- **Keep Wi-Fi on 5 GHz** actually moves the iPhone now: iOS ignores a request to
+  join another radio of the network it's already on, so WiFi Tether disconnects first
+  and joins the 5 GHz radio straight away. If iOS's own auto-join wins the race back
+  to 2.4 GHz, it tries once more.
+
 ## 0.4.9
 
 - New **Keep Wi-Fi on 5 GHz** switch (off by default). Once an iPhone has joined a
