@@ -3,8 +3,8 @@
 **Free and open source, for iPhone and iPad on rootless jailbreaks, iOS 15 and later.** Two things in one app:
 
 - **Plug-and-play USB tethering.** Plug your iPhone or iPad into a computer and the
-  computer is online through its **Wi-Fi**, or through its **VPN**. No SIM, no data plan,
-  nothing to set up on the computer.
+  computer is online through its **Wi-Fi**, or through its **VPN**. No SIM or data plan
+  needed, so **Wi-Fi-only iPads** work too, and nothing to set up on the computer.
 - **Wi-Fi band switcher.** Keeps it on **5 GHz** (faster) or **2.4 GHz**
   (reaches further), even when the router tries to move it. Handy with routers that won't
   let you split the bands, like BT's Smart Hub 2, Sky's Max Hub, Google Nest Wifi and eero. Works on its own,
@@ -35,7 +35,8 @@
   mode off if needed. Switch it off and everything goes back to how it was.
 - **Force 5 GHz or 2.4 GHz.** Keeps the iPhone on the band you pick. Works on its own,
   without tethering or the Share tweak. See [Wi-Fi band switches](#wi-fi-band-switches).
-- **No SIM or data plan needed.** It shares Wi-Fi, not mobile data.
+- **No SIM or data plan needed.** It shares Wi-Fi, not mobile data, so it works on
+  Wi-Fi-only iPads too.
 - **No battery drain when it's off.** The background services sleep.
 - **Free and open source** (MIT), unlike paid tweaks such as Tethera and TetherMe.
 

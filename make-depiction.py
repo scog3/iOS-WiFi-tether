@@ -26,8 +26,8 @@ screenshots = [("screenshots/tethering-5ghz.png", "Sharing Wi-Fi over USB with F
 
 details = (
     "**USB tethering, plus a Wi-Fi band switcher.** Plug your iPhone or iPad into a computer and the "
-    "computer is online through its **Wi-Fi**, or through its **VPN**. No SIM, no data "
-    "plan, nothing to set up on the computer. And switches that keep its Wi-Fi on "
+    "computer is online through its **Wi-Fi**, or through its **VPN**. No SIM or data plan "
+    "needed, so **Wi-Fi-only iPads** work too, and nothing to set up on the computer. And switches that keep its Wi-Fi on "
     "**5 GHz** or **2.4 GHz**.\n\n"
     "- **Plug and play.** Leave the switch on and just plug in. If Windows misses the "
     "connection, WiFi Tether retries by itself.\n"
