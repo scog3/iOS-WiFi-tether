@@ -45,7 +45,7 @@ cat > "$R/index.html" <<'EOF'
 a.b{display:inline-block;background:#007aff;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;font-weight:600}
 code{background:#f0f0f0;padding:2px 5px;border-radius:4px}</style></head><body>
 <h1>WiFi Tether &amp; Band Switcher</h1>
-<p>Plug-and-play USB tethering of a jailbroken iPhone's Wi-Fi or VPN, plus switches that keep Wi-Fi on 5 GHz or 2.4 GHz, even with routers like BT's Smart Hub 2 that won't let you split the bands. No SIM or data plan, nothing to set up on the computer. Rootless jailbreaks, iOS 15 and later.</p>
+<p>Plug-and-play USB tethering of a jailbroken iPhone's Wi-Fi or VPN, plus switches that keep Wi-Fi on 5 GHz or 2.4 GHz, even with routers that won't let you split the bands, like BT's Smart Hub 2, Sky's Max Hub, Google Nest Wifi and eero. No SIM or data plan, nothing to set up on the computer. Rootless jailbreaks, iOS 15 and later.</p>
 <p style="display:flex;gap:8px"><img src="screenshots/tethering-5ghz.png" alt="Sharing Wi-Fi over USB with Force 5 GHz on" style="width:calc(33.3% - 6px);max-width:180px;border-radius:10px"><img src="screenshots/tethering-vpn.png" alt="Sharing the iPhone's VPN over USB" style="width:calc(33.3% - 6px);max-width:180px;border-radius:10px"><img src="screenshots/band-switch.png" alt="Force 2.4 GHz on its own, with sharing off" style="width:calc(33.3% - 6px);max-width:180px;border-radius:10px"></p>
 <p><a class="b" id="add" href="#">Add to Sileo</a></p>
 <p>Or add this source in Sileo by hand: <code id="url"></code></p>

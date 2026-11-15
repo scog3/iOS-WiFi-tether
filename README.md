@@ -7,7 +7,8 @@
   nothing to set up on the computer.
 - **Wi-Fi band switcher.** Keeps the iPhone on **5 GHz** (faster) or **2.4 GHz**
   (reaches further), even when the router tries to move it. Handy with routers that won't
-  let you split the bands, like BT's Smart Hub 2. Works on its own, without tethering.
+  let you split the bands, like BT's Smart Hub 2, Sky's Max Hub, Google Nest Wifi and eero. Works on its own,
+  without tethering.
 
 <p align="center">
   <img src="screenshots/tethering-5ghz.png" width="240" alt="Sharing Wi-Fi over USB with Force 5 GHz on">
@@ -118,8 +119,8 @@ If the band you picked is too weak to connect to where you are, it waits and tri
 later instead of leaving you without Wi-Fi.
 
 It's made for routers that won't let you give each band its own network name or turn
-band steering off, like BT's Smart Hub 2 and other ISP hubs. If your router can split the
-bands, that's the simplest fix of all.
+band steering off, like BT's Smart Hub 2, Sky's Max Hub and mesh systems such as Google
+Nest Wifi and eero. If your router can split the bands, that's the simplest fix of all.
 
 Tested on one iPhone 6s (iOS 15.8.5) and one router. What was tried along the way, what
 worked and what didn't: [docs/band-switching-research.md](docs/band-switching-research.md).
