@@ -85,7 +85,7 @@ and 0.5–0.7 s for the join handshake with the router.
 | Changing iOS's −70 dBm roam trigger | Not the cause: the iPhone held 5 GHz at −84 dBm until the router moved it |
 | Checking every millisecond | Moves are already noticed instantly; the join handshake sets the floor, faster retries meet the router's refusals and add drops, and it costs battery |
 | Router settings (separate band names, turning off steering, fixed channels) | Not available on the router used; fixed channels made no difference |
-| Lower-level approaches below iOS's Wi-Fi service | Not pursued |
+| A band lock in the Wi-Fi chip itself | Not tried yet; see Open questions |
 | Sending logs from inside the app | Crashed the app; logs are copied off the phone with Filza instead |
 
 ## Open questions
@@ -106,6 +106,12 @@ and 0.5–0.7 s for the join handshake with the router.
 - [ ] **Other iOS versions:** the hand-over relies on `wifid`'s `WiFiRoamManager` and its
   roam notification, checked only on iOS 15.8.5.
 - [ ] **Other routers:** everything was measured on one router.
+- [ ] **A band lock in the Wi-Fi chip itself.** Broadcom Wi-Fi chips, like the one in the
+  iPhone 6s, generally support locking to one band: the kind of setting Windows drivers
+  offer as "5 GHz only". That would stop the router's moves at the source instead of undoing
+  them, and on any router. iOS's Wi-Fi driver has no known way to switch it on, so the
+  question is whether the driver (inside the iOS kernel) has a hidden one. A setting to
+  ignore the router's move requests could be worth looking for there too. Not tried yet.
 - [ ] **A 5 GHz-only access point** plugged into the router would end the moves altogether.
   Not tried.
 
