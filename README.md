@@ -259,9 +259,10 @@ root) fills that gap whenever sharing is on:
    knows the moment the router moves the device. It moves back with a hand-over first: a
    small add-on loaded into iOS's Wi-Fi service (`src/roam`, loaded into `wifid`) asks for
    iOS's own roam to that band, the same request iOS makes by itself when 2.4 GHz is poor.
-   iOS picks the radio, so this needs no scan. If it doesn't work, the app scans for the
-   forced band's radio, then disconnects and joins it, telling iOS to avoid the other
-   band's radios for that one join. It backs off when the device won't stay, and changes nothing
+   iOS picks the radio, so this needs no scan. If it doesn't work, the app looks up the
+   forced band's radio among the networks iOS has seen recently (or scans, if it isn't
+   there), then disconnects and joins it, telling iOS to avoid the other band's radios
+   for that one join. It backs off when the device won't stay, and changes nothing
    about the network or its saved settings. The add-on is built twice: arm64 for A11 chips
    and older, and arm64e (with pointer authentication) for A12 and newer. If iOS's Wi-Fi
    service restarts straight after a hand-over request, the app stops asking for

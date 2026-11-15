@@ -1002,6 +1002,8 @@ static time_t      g_b5HandOffUntil;         /* hand-overs paused (not working h
 static pid_t       g_b5HandPid;              /* the wifid asked for the last hand-over */
 static int         g_b5HandBroken;           /* wifid restarted right after a hand-over: off until the switch is */
 static int         g_b5ScanThenJoin;         /* a hand-over with no radio known didn't work: scan, then join */
+static int         g_b5ScanCache;            /* the scan in flight reads iOS's recently seen networks only */
+static int         g_b5SkipCache;            /* a join to a radio failed: the next lookup scans for real */
 static int         g_b5SeenBands;            /* bands this network was seen on: 1 = 2.4 GHz, 2 = 5 GHz */
 static int         g_b5Kicks, g_b5MoveCount;  /* since Force went on, for the status line */
 static time_t      g_b5LastKick, g_b5LastBeat;
@@ -1173,6 +1175,7 @@ static void b5DropTarget(void)
     if (g_b5Target)
         CFRelease(g_b5Target);
     g_b5Target = NULL;
+    g_b5SkipCache = 1;   /* maybe it moved channel: don't trust older sightings */
 }
 
 /* After a join: watch every 0.1 s whether the iPhone ends up on 5 GHz. If it
@@ -1387,19 +1390,30 @@ static void b5HandoverListen(void)
 static void b5Scanned(void *dev, CFArrayRef results, void *err, void *ctx);
 
 /* Asks iOS for a scan; the answer goes to b5Scanned. learn: only to learn
- * the forced band's radio while already on it. */
-static void b5StartScan(int learn)
+ * the forced band's radio while already on it. fromCache: answer from the
+ * networks iOS has seen recently (wifid's beacon cache, "BeaconCacheOnly"),
+ * with no radio scan: instant, and never turned down as busy, which iOS
+ * often does to real scans while on 5 GHz. If the radio isn't there, a real
+ * scan follows. */
+static void b5StartScan(int learn, int fromCache)
 {
-    static CFDictionaryRef opts;
+    static CFDictionaryRef opts, cacheOpts;
 
     if (!opts)
         opts = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks,
                                   &kCFTypeDictionaryValueCallBacks);
+    if (!cacheOpts)
+        cacheOpts = CFBridgingRetain(@{ @"BeaconCacheOnly": @YES });
+    if (fromCache && g_b5SkipCache)
+        fromCache = 0;
+    if (!fromCache)
+        g_b5SkipCache = 0;
     g_b5Busy = 1;
     g_b5BusySince = time(NULL);
     g_b5ScanLearn = learn;
+    g_b5ScanCache = fromCache;
     b5GuardBegin("scan");
-    B5.scan(B5.dev, opts, b5Scanned, NULL);
+    B5.scan(B5.dev, fromCache ? cacheOpts : opts, b5Scanned, NULL);
 }
 
 static void b5Join(void *net, int rssi);
@@ -1475,7 +1489,7 @@ static void b5HandWatch(int checks, int rssi)
         NSLog(@"wifitetherd: band: hand-over didn't move it (on %s after %d ms); scanning for the %s radio to "
               @"join it instead", b5BandName(band), b5Ms(), b5WantName());
         g_b5ScanThenJoin = 1;
-        b5StartScan(0);
+        b5StartScan(0, 1);
     }
 }
 
@@ -1540,7 +1554,7 @@ static void b5Move(void *net, int rssi)
     }
     if (!net) {   /* no hand-over and no radio known: find it first */
         g_b5MoveCount--;
-        b5StartScan(0);
+        b5StartScan(0, 1);
         return;
     }
     b5Join(net, rssi);
@@ -1562,12 +1576,18 @@ static void b5ScannedBody(CFArrayRef results, void *err)
     void *best = NULL;
     int bestRssi = -200, n24 = 0, n5 = 0, band;
     NSMutableArray *avoid = [NSMutableArray array];
-    int learn = g_b5ScanLearn;
+    int learn = g_b5ScanLearn, cached = g_b5ScanCache;
 
     g_b5Busy = 0;
     g_b5ScanLearn = 0;
+    g_b5ScanCache = 0;
     if (!g_b5Running)
         return;
+    if (cached && (!results || CFGetTypeID(results) != CFArrayGetTypeID())) {
+        NSLog(@"wifitetherd: band: iOS's recently seen networks weren't available (%p); scanning", err);
+        b5StartScan(learn, 0);
+        return;
+    }
     if (!results || CFGetTypeID(results) != CFArrayGetTypeID()) {
         if (learn) {
             /* Only learning the radio: iOS on this iPhone often turns these
@@ -1619,6 +1639,11 @@ static void b5ScannedBody(CFArrayRef results, void *err)
         g_b5SeenBands |= 1;
     if (n5)
         g_b5SeenBands |= 2;
+    if (cached && !best) {
+        NSLog(@"wifitetherd: band: the %s radio isn't among iOS's recently seen networks; scanning", b5WantName());
+        b5StartScan(learn, 0);
+        return;
+    }
     if (!best && n24 + n5 == 0) {
         /* Didn't even see the network the iPhone is on: iOS was busy or
          * the iPhone was asleep. Not a sign that the band is out of range. */
@@ -1656,7 +1681,8 @@ static void b5ScannedBody(CFArrayRef results, void *err)
     }
     g_b5Rssi = bestRssi;
     NSLog(@"wifitetherd: band: this network has %d radio(s) on 2.4 GHz and %d on 5 GHz in range; "
-          @"the best %s one is at %d dBm", n24, n5, b5WantName(), bestRssi);
+          @"the best %s one is at %d dBm%s", n24, n5, b5WantName(), bestRssi,
+          cached ? " (from iOS's recently seen networks)" : "");
     if (bestRssi < B5_MIN_RSSI) {
         NSLog(@"wifitetherd: band: the %s radio is too weak to connect to here (%d dBm)", b5WantName(), bestRssi);
         g_b5ScanThenJoin = 0;
@@ -1789,7 +1815,7 @@ static void b5TickBody(void)
          * scan; hand-overs don't need one. */
         if (!g_b5Target && !g_b5Busy && now >= g_b5NextScan5 && !b5HandAvailable(now)) {
             g_b5NextScan5 = now + 300;
-            b5StartScan(1);
+            b5StartScan(1, 1);
         }
         return;
     }
@@ -1813,7 +1839,7 @@ static void b5TickBody(void)
     if (![g_b5State isEqualToString:@"weak"] && ![g_b5State isEqualToString:@"no5"] &&
         ![g_b5State isEqualToString:@"flapping"] && ![g_b5State isEqualToString:@"failed"])
         g_b5State = @"searching";
-    b5StartScan(0);
+    b5StartScan(0, 1);
 }
 
 static NSString *hexOf(const void *p, size_t n)
@@ -1982,6 +2008,7 @@ static void b5Start(void)
     g_b5FailStreak = 0;
     g_b5Avoid = nil;
     b5DropTarget();   /* the radio of the other band, or of an older visit */
+    g_b5SkipCache = 0;
     b5HandoverListen();
     b5HandoverReady();
     g_b5State = @"searching";

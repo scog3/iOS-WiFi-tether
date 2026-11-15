@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3
+
+- **Faster first switch to a band the phone hasn't used lately.** The quick hand-over
+  can't move the phone to a band it hasn't seen recently, typically the first time you
+  turn on Force 2.4 GHz while on 5 GHz. The app then has to find the other radio and join
+  it, and iOS kept refusing to scan while on 5 GHz, so this could take 30 seconds or more.
+  It now takes the radio from the networks iOS has seen recently, with no scan, so it
+  should take a few seconds. After that first switch, hand-overs work both ways.
+- If a join to a radio found that way fails, the next try scans for real.
+
 ## 1.2
 
 - **Band switches start straight away.** The hand-over now goes first, with no scan, since

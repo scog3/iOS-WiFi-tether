@@ -40,6 +40,7 @@ Newest first. The 0.4.18 builds were development builds that led to 1.0.
 
 | Version | What changed | Result |
 | --- | --- | --- |
+| 1.3 | When the hand-over doesn't move it and no radio is known, the radio is looked up in wifid's beacon cache (scan option `BeaconCacheOnly`) instead of a real scan, so the fallback join starts at once | The first switch to 2.4 GHz from 5 GHz should take about 4 s instead of 30 s or more |
 | 1.2 | Moves start with the hand-over straight away, with no scan (iOS picks the radio); a scan only for the fallback join. A scan that misses a band seen before on this network no longer counts as "not in range" | iOS often turns down scans while on 5 GHz, which delayed band switches by up to 30 s and once gave up for 5 minutes |
 | 1.1 | Hand-over add-on also built for arm64e (A12 and newer), with Apple's compiler on a Mac build runner; hand-overs stop if iOS's Wi-Fi service restarts right after one | Untested on A12 and newer |
 | 1.0 | Force 2.4 GHz switch, one switch on at a time; experiments that did nothing removed | Released |
@@ -101,8 +102,14 @@ and 0.5–0.7 s for the join handshake with the router.
 - [x] **Band preference 1 for 2.4 GHz** in the hand-over request: confirmed on the iPhone 6s
   (handed over to 2.4 GHz in 233 ms, no disconnect).
 - [ ] **Why iOS turns down scans while on 5 GHz** (error 0x10, busy) on the iPhone 6s.
-  Scans on 2.4 GHz work. Since 1.2 the hand-over doesn't need a scan, so this only affects
-  the fallback.
+  Scans on 2.4 GHz work. wifid's reasons for refusing include "autojoin is busy", "in
+  autojoin deferral period", "critical phase is ON" and "hosting AWDL session"; which one
+  applies here isn't known. Since 1.3 the fallback reads wifid's beacon cache first.
+- [ ] **The first hand-over to a band the iPhone hasn't used lately doesn't move it.**
+  Switching to 2.4 GHz from 5 GHz without a recent scan failed three times in a row (about
+  3 s each); after one join to 2.4 GHz, hand-overs both ways worked. Likely the chip only
+  roams to channels it has seen the network on recently. Hand-overs back to 5 GHz after a
+  router kick aren't affected, since the iPhone was just there.
 - [ ] **Newer iPhones:** since 1.1 the add-on is also built for arm64e, so iPhone XS, XR and
   newer should load it, but none has been tested. Check the log for `hand-over add-on loaded`
   and `handed over to`. Clang 18 on Linux can't make a proper arm64e build (its output is
