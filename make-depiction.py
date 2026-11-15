@@ -25,9 +25,9 @@ screenshots = [("screenshots/tethering-5ghz.png", "Sharing Wi-Fi over USB with F
                ("screenshots/band-switch.png", "Force 2.4 GHz on its own, with sharing off")]
 
 details = (
-    "**USB tethering, plus a Wi-Fi band switcher.** Plug your iPhone into a computer and the "
-    "computer is online through the iPhone's **Wi-Fi**, or through its **VPN**. No SIM, no data "
-    "plan, nothing to set up on the computer. And switches that keep the iPhone's Wi-Fi on "
+    "**USB tethering, plus a Wi-Fi band switcher.** Plug your iPhone or iPad into a computer and the "
+    "computer is online through its **Wi-Fi**, or through its **VPN**. No SIM, no data "
+    "plan, nothing to set up on the computer. And switches that keep its Wi-Fi on "
     "**5 GHz** or **2.4 GHz**.\n\n"
     "- **Plug and play.** Leave the switch on and just plug in. If Windows misses the "
     "connection, WiFi Tether retries by itself.\n"
@@ -35,17 +35,19 @@ details = (
     "- **Switch VPN location while plugged in.** The computer follows within a second or two.\n"
     "- **Full speed.** No cap: about what the iPhone itself gets, up to what the USB port "
     "carries. Through a VPN, as fast as the VPN runs on the phone.\n"
+    "- **Barely any added latency.** Only a millisecond or two on top of the iPhone's own ping.\n"
     "- **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected, handles airplane mode.\n"
-    "- **Force 5 GHz or 2.4 GHz.** Keeps the iPhone on the band you pick, even when the router "
+    "- **Force 5 GHz or 2.4 GHz.** Keeps it on the band you pick, even when the router "
     "moves it. Handy with routers that won't let you split the bands, like BT's Smart Hub 2, "
     "Sky's Max Hub, Google Nest Wifi and eero. "
     "Works on its own, without tethering or Share. Moving back is near-instant on "
-    "iPhone X and older; newer iPhones drop Wi-Fi for about half a second each time.\n"
+    "iPhone X and older (A11 chip or older, iPads too); newer devices drop Wi-Fi for about half a "
+    "second each time.\n"
     "- **No battery drain when it's off.**\n"
     "- **Free and open source** (MIT).\n\n"
     "USB tethering needs the **Share** tweak (the app has a button that adds its repo in Sileo); "
     "the band switches work without it. "
-    "Rootless jailbreaks, iOS 15 and later.\n\n"
+    "iPhone and iPad, rootless jailbreaks, iOS 15 and later.\n\n"
     "[Source code on GitHub](https://github.com/scog3/iOS-WiFi-tether)"
 )
 

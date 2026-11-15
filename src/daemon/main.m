@@ -271,6 +271,15 @@ static void writeVpnIf(const char *name)
 }
 
 /* Keep the logs small: launchd appends to them, so truncating is safe. */
+/* "iPhone", "iPad" or "iPod touch", for messages people see. */
+static NSString *deviceWord(void)
+{
+    char m[64] = "";
+    size_t n = sizeof(m);
+    sysctlbyname("hw.machine", m, &n, NULL, 0);
+    return !strncmp(m, "iPad", 4) ? @"iPad" : !strncmp(m, "iPod", 4) ? @"iPod touch" : @"iPhone";
+}
+
 static void trimLog(const char *path)
 {
     struct stat st;
@@ -842,7 +851,8 @@ static NSString *controlHotspot(const WTIf *up, const WTIf *lan, int air)
         if (now >= g_hsNextTry && g_hsTries < 3) {
             if (!hsInit())
                 return g_hsCrashed
-                    ? @"Turning Personal Hotspot on automatically crashed on this iPhone, so it's off. Turn Personal Hotspot on in Settings."
+                    ? [NSString stringWithFormat:@"Turning Personal Hotspot on automatically crashed on this %@, so it's off. "
+                                                 @"Turn Personal Hotspot on in Settings.", deviceWord()]
                     : @"Couldn't reach iOS's Personal Hotspot controls. Turn Personal Hotspot on in Settings.";
             NSLog(@"wifitetherd: turning on Personal Hotspot (state %d)", hs);
             hotspotSet(YES);
@@ -2012,8 +2022,8 @@ static void reconcile(void)
             askAirplane(@"WiFi Tether is switched on, but Personal Hotspot can't run in airplane mode. "
                         "Turn airplane mode off? Wi-Fi stays on.");
         } else if (en && g_lastEnabled == 1 && air == 1 && lastAir == 0) {
-            askAirplane(@"Personal Hotspot has stopped, so the computer connected to this iPhone has lost "
-                        "its internet connection. Turn airplane mode off? Wi-Fi stays on.");
+            askAirplane([NSString stringWithFormat:@"Personal Hotspot has stopped, so the computer connected to this %@ "
+                         @"has lost its internet connection. Turn airplane mode off? Wi-Fi stays on.", deviceWord()]);
         }
         if (!en && g_lastEnabled == 1 && access(WT_AIR_RESTORE, F_OK) == 0) {
             if (air == 0)

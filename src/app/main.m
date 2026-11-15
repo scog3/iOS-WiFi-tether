@@ -18,6 +18,13 @@
 @interface WTViewController : UIViewController
 @end
 
+/* "iPhone", "iPad" or "iPod touch", for the texts. */
+static NSString *deviceWord(void)
+{
+    NSString *m = UIDevice.currentDevice.model;
+    return [m hasPrefix:@"iPad"] ? @"iPad" : [m hasPrefix:@"iPod"] ? @"iPod touch" : @"iPhone";
+}
+
 /* Which band the iPhone's Wi-Fi is on, from the network it's joined (MobileWiFi; needs
  * com.apple.wifi.manager-access). nil if there's no Wi-Fi or it can't tell. */
 static NSString *wifiBand(void)
@@ -143,8 +150,8 @@ static NSString *wifiBand(void)
     UILabel *title = [self labelWithSize:34 weight:UIFontWeightBold color:UIColor.labelColor];
     title.text = @"WiFi Tether &\nBand Switcher";
     UILabel *subtitle = [self labelWithSize:15 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
-    subtitle.text = @"Shares this iPhone's Wi-Fi or VPN with a computer over USB, and keeps Wi-Fi on the "
-                    @"band you choose.";
+    subtitle.text = [NSString stringWithFormat:@"Shares this %@'s Wi-Fi or VPN with a computer over USB, and "
+                                               @"keeps Wi-Fi on the band you choose.", deviceWord()];
 
     UILabel *toggleLabel = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
     toggleLabel.text = @"Share Wi-Fi over USB";
@@ -185,10 +192,11 @@ static NSString *wifiBand(void)
     _band5Info = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
 
     UILabel *help = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
-    help.text = @"USB tethering: connect this iPhone to Wi-Fi, turn on Share Wi-Fi over USB, then plug the "
-                @"iPhone into the computer. The computer goes online through this iPhone's Wi-Fi, or its VPN "
-                @"when one is connected. Turning sharing off turns Personal Hotspot off.\n\n"
-                @"USB tethering needs the Share tweak; the Wi-Fi band switches don't.";
+    help.text = [NSString stringWithFormat:
+                 @"USB tethering: connect this %1$@ to Wi-Fi, turn on Share Wi-Fi over USB, then plug the "
+                 @"%1$@ into the computer. The computer goes online through this %1$@'s Wi-Fi, or its VPN "
+                 @"when one is connected. Turning sharing off turns Personal Hotspot off.\n\n"
+                 @"USB tethering needs the Share tweak; the Wi-Fi band switches don't.", deviceWord()];
 
     /* Share tweak missing: say so first, with a button that opens Sileo. */
     UILabel *shareTitle = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
@@ -341,7 +349,8 @@ static NSString *wifiBand(void)
     else if ([s isEqualToString:@"weak"])
         text = [NSString stringWithFormat:@"%@ is too weak here%@. Trying again in a couple of minutes.", want, dbm];
     else if ([s isEqualToString:@"flapping"])
-        text = [NSString stringWithFormat:@"Paused for a few minutes: the iPhone keeps getting moved back to %@.", other];
+        text = [NSString stringWithFormat:@"Paused for a few minutes: the %@ keeps getting moved back to %@.",
+                                          deviceWord(), other];
     else if ([s isEqualToString:@"notsticking"])
         text = [NSString stringWithFormat:@"Couldn't stay on %@. Trying again in a few minutes.", want];
     else if ([s isEqualToString:@"failed"])
@@ -351,9 +360,9 @@ static NSString *wifiBand(void)
     else if ([s isEqualToString:@"crashed"])
         text = @"Stopped after an error. Turn the switch off and on to try again.";
     else if ([s isEqualToString:@"unsupported"])
-        text = @"Not available on this iPhone.";
+        text = [NSString stringWithFormat:@"Not available on this %@.", deviceWord()];
     else if ([s isEqualToString:@"unknown"])
-        text = @"Can't tell which band this iPhone is on.";
+        text = [NSString stringWithFormat:@"Can't tell which band this %@ is on.", deviceWord()];
     else
         text = @"Starting…";
     _band5Info.text = text;
@@ -473,7 +482,7 @@ static NSString *wifiBand(void)
         _detail.text = @"Personal Hotspot is off and the background services are asleep.";
     } else if ([state isEqualToString:@"nowifi"]) {
         [self showState:@"Waiting for Wi-Fi" color:UIColor.systemOrangeColor];
-        _detail.text = @"Connect this iPhone to a Wi-Fi network.";
+        _detail.text = [NSString stringWithFormat:@"Connect this %@ to a Wi-Fi network.", deviceWord()];
     } else if ([state isEqualToString:@"airplane"]) {
         [self showState:@"Airplane mode is on" color:UIColor.systemOrangeColor];
     } else if ([state isEqualToString:@"waitcomputer"]) {

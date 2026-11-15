@@ -1,11 +1,11 @@
-# WiFi Tether & Band Switcher: USB tethering and Wi-Fi band control for jailbroken iPhones
+# WiFi Tether & Band Switcher: USB tethering and Wi-Fi band control for jailbroken iPhones and iPads
 
-**Free and open source, for rootless jailbreaks on iOS 15 and later.** Two things in one app:
+**Free and open source, for iPhone and iPad on rootless jailbreaks, iOS 15 and later.** Two things in one app:
 
-- **Plug-and-play USB tethering.** Plug your iPhone into a computer and the computer is
-  online through the iPhone's **Wi-Fi**, or through its **VPN**. No SIM, no data plan,
+- **Plug-and-play USB tethering.** Plug your iPhone or iPad into a computer and the
+  computer is online through its **Wi-Fi**, or through its **VPN**. No SIM, no data plan,
   nothing to set up on the computer.
-- **Wi-Fi band switcher.** Keeps the iPhone on **5 GHz** (faster) or **2.4 GHz**
+- **Wi-Fi band switcher.** Keeps it on **5 GHz** (faster) or **2.4 GHz**
   (reaches further), even when the router tries to move it. Handy with routers that won't
   let you split the bands, like BT's Smart Hub 2, Sky's Max Hub, Google Nest Wifi and eero. Works on its own,
   without tethering.
@@ -28,6 +28,9 @@
 - **Full speed.** No cap: the computer gets about what the iPhone itself gets, up to
   what the USB port carries (USB 2.0 on Lightning, a few hundred Mbps). Through a VPN,
   it's as fast as the VPN runs on the phone.
+- **Barely any added latency.** Tethering adds only a millisecond or two on top of the
+  iPhone's own ping; the USB hop itself is under 1 ms. Through a VPN, the VPN server's
+  distance adds the same as it does on the phone.
 - **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected and turns airplane
   mode off if needed. Switch it off and everything goes back to how it was.
 - **Force 5 GHz or 2.4 GHz.** Keeps the iPhone on the band you pick. Works on its own,
@@ -39,8 +42,9 @@
 Handy when a computer has no Wi-Fi, broken Wi-Fi, or can't join a network the iPhone
 can, like a captive portal you've already signed in to on the phone.
 
-> **Beta.** Tested on iPhone with iOS 15.8.5 (Dopamine, rootless) and a Windows PC.
-> iPads should work too, since Share supports them (including Wi-Fi-only models), but haven't been tested yet.
+> **Beta.** Should work on any iPhone or iPad with a rootless jailbreak on iOS 15 or later,
+> including Wi-Fi-only iPads (Share supports them). So far it's been tested on an iPhone 6s
+> with iOS 15.8.5 (Dopamine) and a Windows PC.
 > Reports from other devices are welcome; please open an issue.
 
 ## What you need
@@ -110,10 +114,12 @@ Turn on **Force 5 GHz** or **Force 2.4 GHz** in the app's **Wi-Fi band** section
 one can be on). Each time the router moves the iPhone, WiFi Tether moves it straight
 back:
 
-- **iPhone X and older:** with a hand-over, the same quick switch iOS uses itself. It
-  takes about a quarter of a second and Wi-Fi doesn't drop.
-- **iPhone XS, XR and newer:** the hand-over part isn't built for these iPhones yet, so
-  it disconnects and rejoins instead. Wi-Fi drops for about half a second each time.
+- **iPhone X and older, and iPads with an A11 chip or older:** with a hand-over, the
+  same quick switch iOS uses itself. It takes about a quarter of a second and Wi-Fi
+  doesn't drop.
+- **iPhone XS, XR and newer, and iPads with an A12 chip or newer:** the hand-over part
+  isn't built for these yet, so it disconnects and rejoins instead. Wi-Fi drops for about
+  half a second each time.
 
 If the band you picked is too weak to connect to where you are, it waits and tries again
 later instead of leaving you without Wi-Fi.
@@ -224,7 +230,7 @@ address but has no route to the internet. WiFi Tether's background service
    radios for that one join. It backs off when the iPhone won't stay, and changes
    nothing about the network or its saved settings. The add-on is built for 64-bit ARM
    without pointer authentication (arm64), which is why the hand-over only works on
-   iPhone X and older; newer iPhones need an arm64e build.
+   A11 chips and older (iPhone X and older); A12 and newer need an arm64e build.
 
 Everything is removed again when you switch sharing off or uninstall.
 

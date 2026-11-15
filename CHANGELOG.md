@@ -6,7 +6,7 @@
   Force 2.4 GHz, and near-instant moves back to the chosen band.
 - The **VPN** row shows a connected VPN even while USB sharing is off; before, it said
   *Not connected*.
-- Shorter instructions at the bottom of the app.
+- Shorter instructions at the bottom of the app, and the app says iPad on an iPad.
 - New screenshots.
 
 ## 0.5.0
@@ -17,9 +17,9 @@
 - **Moving back is now near-instant.** The real cause turned out to be the router: routers
   with one network name on both bands move the iPhone between bands by themselves (band
   steering). WiFi Tether now notices the moment that happens and moves the iPhone straight
-  back. On iPhone X and older it uses iOS's own hand-over, through a small add-on in iOS's
-  Wi-Fi service, so Wi-Fi doesn't drop; on newer iPhones it disconnects and rejoins, which
-  drops Wi-Fi for about half a second.
+  back. On iPhone X and older (and iPads with an A11 chip or older) it uses iOS's own
+  hand-over, through a small add-on in iOS's Wi-Fi service, so Wi-Fi doesn't drop; on newer
+  devices it disconnects and rejoins, which drops Wi-Fi for about half a second.
 - Installing restarts iOS's Wi-Fi service so the add-on loads; Wi-Fi drops for a few
   seconds.
 - Shorter texts in the app's Wi-Fi band section and a shorter 5 GHz warning.
