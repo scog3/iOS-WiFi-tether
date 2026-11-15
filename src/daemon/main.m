@@ -999,6 +999,8 @@ static int         g_b5HandWorked;           /* a hand-over has worked since For
 static int         g_b5HandFails;            /* moves in a row where hand-overs didn't work */
 static int         g_b5HandTries;            /* hand-overs in this move */
 static time_t      g_b5HandOffUntil;         /* hand-overs paused (not working here) until */
+static pid_t       g_b5HandPid;              /* the wifid asked for the last hand-over */
+static int         g_b5HandBroken;           /* wifid restarted right after a hand-over: off until the switch is */
 static int         g_b5Kicks, g_b5MoveCount;  /* since Force went on, for the status line */
 static time_t      g_b5LastKick, g_b5LastBeat;
 static int         g_b5ScanLearn;            /* the scan in flight only learns the radio (already on the band) */
@@ -1348,6 +1350,8 @@ static int b5HandoverReady(void)
         notify_cancel(tok);
     }
     ready = pid > 1 && kill((pid_t)pid, 0) == 0;
+    if (ready)
+        g_b5HandPid = (pid_t)pid;
     if (ready != g_b5HandReady)
         NSLog(@"wifitetherd: band: hand-over add-on %s", ready
               ? [NSString stringWithFormat:@"loaded in iOS's Wi-Fi service (pid %llu)", pid].UTF8String
@@ -1421,6 +1425,14 @@ static void b5HandWatch(int checks, int rssi)
         });
         return;
     }
+    if (g_b5HandPid > 1 && kill(g_b5HandPid, 0) != 0) {
+        /* The wifid that was asked is gone: the request may have crashed it
+         * (the add-on is untested on some devices). Don't ask again until the
+         * switch is turned off and on. */
+        NSLog(@"wifitetherd: band: iOS's Wi-Fi service restarted right after a hand-over request; hand-overs are off "
+              @"until the switch is turned off and on");
+        g_b5HandBroken = 1;
+    }
     if (++g_b5HandFails >= 3) {
         NSLog(@"wifitetherd: band: hand-overs aren't working here; disconnecting and rejoining for the next 10 minutes");
         g_b5HandOffUntil = time(NULL) + 600;
@@ -1475,7 +1487,7 @@ static void b5Move(void *net, int rssi)
     }
     g_b5MoveCount++;
     /* Hand-over first, where the add-on is there: no disconnect. */
-    if (now >= g_b5HandOffUntil && b5HandoverReady()) {
+    if (!g_b5HandBroken && now >= g_b5HandOffUntil && b5HandoverReady()) {
         void *old = g_b5Joining;
         g_b5Joining = (void *)CFRetain(net);
         if (old)
@@ -1900,6 +1912,7 @@ static void b5Start(void)
     g_b5HandWorked = 0;
     g_b5HandFails = 0;
     g_b5HandOffUntil = 0;
+    g_b5HandBroken = 0;
     g_b5Kicks = g_b5MoveCount = 0;
     g_b5LastKick = 0;
     g_b5LastBeat = time(NULL);
@@ -2187,7 +2200,7 @@ static void reconcile(void)
         st[@"band5"] = g_b5State;
         st[@"band5want"] = @(g_b5Want);
         if (g_b5Running && g_b5HandReady >= 0)
-            st[@"band5hand"] = @(g_b5HandReady == 1);
+            st[@"band5hand"] = @(g_b5HandReady == 1 && !g_b5HandBroken);
         if (g_b5Rssi)
             st[@"band5rssi"] = @(g_b5Rssi);
         st[@"updated"] = @([[NSDate date] timeIntervalSince1970]);

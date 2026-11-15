@@ -3,6 +3,8 @@
  * The real work happens in the background service (wifitetherd).
  */
 
+#include <mach/machine.h>
+#include <sys/sysctl.h>
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 #include <notify.h>
@@ -17,6 +19,17 @@
 
 @interface WTViewController : UIViewController
 @end
+
+/* A12 and newer (arm64e): the band switcher's no-drop hand-over is new and
+ * untested there (built for them from 1.1). */
+static BOOL handoverUntested(void)
+{
+    cpu_subtype_t sub = 0;
+    size_t n = sizeof(sub);
+    if (sysctlbyname("hw.cpusubtype", &sub, &n, NULL, 0) != 0)
+        return NO;
+    return (sub & ~CPU_SUBTYPE_MASK) == CPU_SUBTYPE_ARM64E;
+}
 
 /* "iPhone", "iPad" or "iPod touch", for the texts. */
 static NSString *deviceWord(void)
@@ -393,6 +406,30 @@ static NSString *wifiBand(void)
 - (void)band24Toggled:(UISwitch *)sender
 {
     [self setBand:WT_PREFER24 on:sender.on];
+    if (sender.on && handoverUntested())
+        [self showUntestedNoticeOnce];
+}
+
+static NSString *untestedText(void)
+{
+    return [NSString stringWithFormat:@"On this %@, moving back without dropping Wi-Fi is new and hasn't been "
+                                      @"tested yet. If it doesn't work, it moves back the older way, with Wi-Fi "
+                                      @"dropping for about half a second. If Wi-Fi misbehaves, turn the switch off "
+                                      @"and please report it on GitHub with daemon.log.", deviceWord()];
+}
+
+/* Once, for Force 2.4 GHz (Force 5 GHz's warning carries the same note). */
+- (void)showUntestedNoticeOnce
+{
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    if ([d boolForKey:@"untestedNoticeShown"])
+        return;
+    [d setBool:YES forKey:@"untestedNoticeShown"];
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Not tested on this device yet"
+                                                               message:untestedText()
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 /* Turning it on warns first: a weak 5 GHz signal can make Wi-Fi worse. */
@@ -405,8 +442,12 @@ static NSString *wifiBand(void)
     _band5Asking = YES;
     UIAlertController *a = [UIAlertController
         alertControllerWithTitle:@"Force 5 GHz?"
-                         message:@"5 GHz is faster but doesn't reach as far as 2.4 GHz. Where its signal is weak, "
-                                 @"Wi-Fi may be slower or drop out for a moment."
+                         message:handoverUntested()
+                                     ? [@"5 GHz is faster but doesn't reach as far as 2.4 GHz. Where its signal is "
+                                        @"weak, Wi-Fi may be slower or drop out for a moment.\n\n"
+                                        stringByAppendingString:untestedText()]
+                                     : @"5 GHz is faster but doesn't reach as far as 2.4 GHz. Where its signal is weak, "
+                                       @"Wi-Fi may be slower or drop out for a moment."
                   preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) {
         self->_band5Asking = NO;

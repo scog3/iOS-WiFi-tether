@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1
+
+- **Hand-over for iPhone XS and newer (untested).** The band switcher's no-drop move back
+  now has a build for A12 chips and newer (iPhone XS, XR and later, and newer iPads). It
+  hasn't been tried on one of these yet, and the app says so when you turn a band switch
+  on. If it doesn't work, the app moves back the older way, with Wi-Fi dropping for about
+  half a second. Reports welcome, whether it works or not.
+- If iOS's Wi-Fi service restarts straight after a hand-over request, the app stops asking
+  for hand-overs until the switch is turned off and on.
+- The README's screenshots now sit side by side on phones.
+
 ## 1.0
 
 - **New name: WiFi Tether & Band Switcher.** On the home screen it's **Tether & Band**.

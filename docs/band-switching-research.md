@@ -40,6 +40,7 @@ Newest first. The 0.4.18 builds were development builds that led to 1.0.
 
 | Version | What changed | Result |
 | --- | --- | --- |
+| 1.1 | Hand-over add-on also built for arm64e (A12 and newer), with Apple's compiler on a Mac build runner; hand-overs stop if iOS's Wi-Fi service restarts right after one | Untested on A12 and newer |
 | 1.0 | Force 2.4 GHz switch, one switch on at a time; experiments that did nothing removed | Released |
 | 0.4.18 dev 9 | Status line in the log every 5 minutes; the scan that learns the radio gives up after 3 busy refusals | Worked |
 | 0.4.18 dev 8 | Add-on inside `wifid` asks for iOS's own hand-over to the forced band; disconnect-and-join kept as the fallback | Worked: 278 ms, no disconnect |
@@ -101,8 +102,10 @@ and 0.5–0.7 s for the join handshake with the router.
   it's wrong.
 - [ ] **Why iOS turns down scans while on 5 GHz** (error 0x10, busy) on the iPhone 6s.
   Scans on 2.4 GHz work.
-- [ ] **Newer iPhones:** the add-on is built for arm64 only, so iPhone XS, XR and newer
-  (arm64e) don't load it and use the fallback. An arm64e build is the next step there.
+- [ ] **Newer iPhones:** since 1.1 the add-on is also built for arm64e, so iPhone XS, XR and
+  newer should load it, but none has been tested. Check the log for `hand-over add-on loaded`
+  and `handed over to`. Clang 18 on Linux can't make a proper arm64e build (its output is
+  marked plain arm64), so that part is built with Xcode on a GitHub Mac runner.
 - [ ] **Other iOS versions:** the hand-over relies on `wifid`'s `WiFiRoamManager` and its
   roam notification, checked only on iOS 15.8.5.
 - [ ] **Other routers:** everything was measured on one router.

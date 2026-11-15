@@ -63,9 +63,19 @@ cp "$XNU/bsd/sys/event.h" "$B/include/vpn/sys/event.h"
     src/vpn/pftun.c -o "$B/wifitether-vpn"
 
 echo "== Building hand-over add-on for iOS's Wi-Fi service (src/roam)"
-"$CLANG" "${CFLAGS[@]}" "${LDFLAGS[@]}" -fobjc-arc -dynamiclib \
-    -install_name /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherRoam.dylib \
-    src/roam/roam.m -framework Foundation -framework CoreFoundation -o "$B/WiFiTetherRoam.dylib"
+# A12 and newer (arm64e) need an arm64e build, which only Apple's compiler
+# makes properly; GitHub's build makes one on a Mac (ROAM_DYLIB, arm64 +
+# arm64e). Without it, this builds arm64 only, and A12-and-newer devices
+# move bands by disconnecting and rejoining instead.
+if [ -n "${ROAM_DYLIB:-}" ] && [ -f "$ROAM_DYLIB" ]; then
+    echo "   using $ROAM_DYLIB (arm64 + arm64e, built with Xcode)"
+    cp "$ROAM_DYLIB" "$B/WiFiTetherRoam.dylib"
+else
+    echo "   arm64 only (no ROAM_DYLIB)"
+    "$CLANG" "${CFLAGS[@]}" "${LDFLAGS[@]}" -fobjc-arc -dynamiclib \
+        -install_name /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherRoam.dylib \
+        src/roam/roam.m -framework Foundation -framework CoreFoundation -o "$B/WiFiTetherRoam.dylib"
+fi
 
 echo "== Building app"
 "$CLANG" "${CFLAGS[@]}" -fobjc-arc -c src/app/main.m -o "$B/app_main.o"

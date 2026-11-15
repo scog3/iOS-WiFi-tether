@@ -13,9 +13,9 @@ things in one app, called **Tether & Band** on the home screen:
 Each works on its own: use one, the other or both.
 
 <p align="center">
-  <img src="screenshots/tethering-5ghz.png" width="240" alt="Sharing Wi-Fi over USB with Force 5 GHz on">
-  <img src="screenshots/tethering-vpn.png" width="240" alt="Sharing the iPhone's VPN over USB">
-  <img src="screenshots/band-switch.png" width="240" alt="Force 2.4 GHz on its own, with sharing off">
+  <img src="screenshots/tethering-5ghz.png" width="30%" alt="Sharing Wi-Fi over USB with Force 5 GHz on">
+  <img src="screenshots/tethering-vpn.png" width="30%" alt="Sharing the iPhone's VPN over USB">
+  <img src="screenshots/band-switch.png" width="30%" alt="Force 2.4 GHz on its own, with sharing off">
 </p>
 
 ## Features
@@ -53,8 +53,8 @@ TetherMe.
 
 > **Beta.** Should work on any iPhone or iPad with a rootless jailbreak on iOS 15 or later,
 > including Wi-Fi-only iPads. So far it's been tested on an iPhone 6s with iOS 15.8.5
-> (Dopamine) and a Windows PC. Reports from other devices and routers are welcome; please
-> open an issue.
+> (Dopamine) and a Windows PC; the band switcher's hand-over on iPhone XS and newer hasn't
+> been tested yet. Reports from other devices and routers are welcome; please open an issue.
 
 ## What you need
 
@@ -140,14 +140,18 @@ dips. iOS has no setting to stop that, and routers like BT's Smart Hub 2, Sky's 
 and mesh systems such as Google Nest Wifi and eero don't let you split the bands either.
 If your router can give each band its own name, that's the simplest fix of all.
 
-Each time the router moves the device, the app moves it straight back:
+Each time the router moves the device, the app moves it straight back with a hand-over,
+the same quick switch iOS uses itself. It takes about a quarter of a second and Wi-Fi
+doesn't drop. If a hand-over doesn't work, it disconnects and rejoins instead, which drops
+Wi-Fi for about half a second.
 
-- **iPhone X and older, and iPads with an A11 chip or older:** with a hand-over, the same
-  quick switch iOS uses itself. It takes about a quarter of a second and Wi-Fi doesn't
-  drop.
-- **iPhone XS, XR and newer, and iPads with an A12 chip or newer:** the hand-over part
-  isn't built for these yet, so it disconnects and rejoins instead. Wi-Fi drops for about
-  half a second each time.
+- **iPhone X and older, and iPads with an A11 chip or older:** working on an iPhone 6s, and
+  the same build covers the rest of these.
+- **iPhone XS, XR and newer, and iPads with an A12 chip or newer:** these need their own
+  build of the hand-over part, which is new in 1.1 and **not tested on one of these
+  devices yet**. The app says so when you turn a band switch on. If it doesn't work,
+  you get the half-second rejoin instead. If you try it, please open an issue with your
+  `daemon.log`, whether it worked or not.
 
 If the band you picked is too weak to connect to where you are, it waits and tries again
 later instead of leaving you without Wi-Fi.
@@ -202,8 +206,8 @@ Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
 **Wi-Fi band switcher**
 
 - **Wi-Fi blips now and then.** That's the router moving the device to the other band and
-  the app moving it straight back. On iPhone XS and newer each move back drops Wi-Fi for
-  about half a second.
+  the app moving it straight back. Where the hand-over doesn't work, each move back drops
+  Wi-Fi for about half a second.
 - **"Paused for a few minutes" or "Couldn't stay on 5 GHz".** The router keeps moving it
   back faster than it can stay, usually because the 5 GHz signal is weak where you are.
   It tries again by itself; moving closer to the router helps.
@@ -258,9 +262,10 @@ root) fills that gap whenever sharing is on:
    the same request iOS makes by itself when 2.4 GHz is poor. If that doesn't work, it
    disconnects and joins the forced band's radio, telling iOS to avoid the other band's
    radios for that one join. It backs off when the device won't stay, and changes nothing
-   about the network or its saved settings. The add-on is built for 64-bit ARM without
-   pointer authentication (arm64), which is why the hand-over only works on A11 chips and
-   older (iPhone X and older); A12 and newer need an arm64e build.
+   about the network or its saved settings. The add-on is built twice: arm64 for A11 chips
+   and older, and arm64e (with pointer authentication) for A12 and newer. If iOS's Wi-Fi
+   service restarts straight after a hand-over request, the app stops asking for
+   hand-overs until the switch is turned off and on.
 
 Everything is removed again when you turn sharing off or uninstall.
 
@@ -273,9 +278,14 @@ in `VERSION` and that version's notes from [CHANGELOG.md](CHANGELOG.md). Buildin
 version again replaces its `.deb`; bump `VERSION` and add a changelog entry to make a new
 release.
 
+The hand-over add-on's arm64e part is built with Apple's compiler on a GitHub Mac runner
+(the `roam` job), because the open-source compiler on Linux can't make a proper arm64e
+build yet; the Linux build then packages it. If that job fails, the release goes ahead
+with an arm64-only add-on.
+
 To build locally on Linux, install `clang`, `lld`, `ldid` and `dpkg`, then run
 `bash build-linux.sh`. It builds the app, the background service, the VPN helper and the
-hand-over add-on. The script downloads an iPhone SDK (from
+hand-over add-on (arm64 only, unless `ROAM_DYLIB` points to a prebuilt one). The script downloads an iPhone SDK (from
 [theos/sdks](https://github.com/theos/sdks)) and Apple's open-source XNU sources for the
 packet filter and other private headers.
 
