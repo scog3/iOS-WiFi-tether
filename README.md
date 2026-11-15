@@ -1,12 +1,13 @@
-# WiFi Tether: USB tethering and Force 5 GHz Wi-Fi for jailbroken iPhones
+# WiFi Tether & Band Switcher: USB tethering and Wi-Fi band control for jailbroken iPhones
 
 **Free and open source, for rootless jailbreaks on iOS 15 and later.** Two things in one app:
 
 - **Plug-and-play USB tethering.** Plug your iPhone into a computer and the computer is
   online through the iPhone's **Wi-Fi**, or through its **VPN**. No SIM, no data plan,
   nothing to set up on the computer.
-- **Force 5 GHz Wi-Fi.** Keeps the iPhone on your router's fast 5 GHz radio instead of
-  slow 2.4 GHz. iOS has no setting for this. Works on its own, without tethering.
+- **Wi-Fi band switcher.** Keeps the iPhone on **5 GHz** (faster) or **2.4 GHz**
+  (reaches further), even when the router tries to move it. Works on its own, without
+  tethering.
 
 <p align="center">
   <img src="screenshots/sharing-vpn.png" width="260" alt="WiFi Tether sharing the iPhone's VPN over USB">
@@ -27,9 +28,8 @@
   it's as fast as the VPN runs on the phone.
 - **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected and turns airplane
   mode off if needed. Switch it off and everything goes back to how it was.
-- **Force 5 GHz.** Keeps the iPhone on your router's faster 5 GHz radio instead of slow
-  2.4 GHz, even where iOS would switch back. Works on its own, without tethering or the
-  Share tweak.
+- **Force 5 GHz or 2.4 GHz.** Keeps the iPhone on the band you pick. Works on its own,
+  without tethering or the Share tweak. See [Wi-Fi band switches](#wi-fi-band-switches).
 - **No SIM or data plan needed.** It shares Wi-Fi, not mobile data.
 - **No battery drain when it's off.** The background services sleep.
 - **Free and open source** (MIT), unlike paid tweaks such as Tethera and TetherMe.
@@ -47,7 +47,7 @@ can, like a captive portal you've already signed in to on the phone.
 - For USB tethering: the **[Share](https://github.com/amineross/share)** tweak by
   amineross, from the repo `https://aminerostane.com/repo`. Share turns on Personal
   Hotspot without a SIM; WiFi Tether adds the internet connection on top.
-  **Force 5 GHz** doesn't need it.
+  The **band switches** don't need it.
 - For USB tethering: a USB cable, and a computer that supports iPhone USB tethering
   (Windows needs Apple's iPhone drivers, which come with iTunes or Apple Devices;
   macOS and most Linux distributions work out of the box)
@@ -58,7 +58,8 @@ can, like a captive portal you've already signed in to on the phone.
 
 1. In Sileo, add the source `https://scog3.github.io/iOS-WiFi-tether/`
    (or open that page on the iPhone and tap **Add to Sileo**).
-2. Install **WiFi Tether**.
+2. Install **WiFi Tether & Band Switcher**. Installing restarts iOS's Wi-Fi service, so
+   Wi-Fi drops for a few seconds.
 3. For USB tethering, install the **Share** tweak: open WiFi Tether and tap **Add Share's
    Repo in Sileo**. Sileo opens with the address filled in: tap **Add Dist Repo**, then
    **Add** (Sileo's *Add Source* can silently fail to add it). Then install Share from
@@ -96,6 +97,28 @@ to turn Personal Hotspot off; the background services then sleep and use no batt
 The **VPN** row shows *Not connected*, *Shared via utunN* (the computer's traffic goes
 through the iPhone's VPN), or *not shared yet* (the VPN was just connected; give it a
 couple of seconds).
+
+## Wi-Fi band switches
+
+Many routers use one network name for both bands and move phones between them on their
+own ("band steering"), often pushing an iPhone onto slow 2.4 GHz whenever its 5 GHz
+signal dips. iOS has no setting to stop that.
+
+Turn on **Force 5 GHz** or **Force 2.4 GHz** in the app's **Wi-Fi band** section (only
+one can be on). Each time the router moves the iPhone, WiFi Tether moves it straight
+back:
+
+- **iPhone X and older:** with a hand-over, the same quick switch iOS uses itself. It
+  takes about a quarter of a second and Wi-Fi doesn't drop.
+- **iPhone XS, XR and newer:** the hand-over part isn't built for these iPhones yet, so
+  it disconnects and rejoins instead. Wi-Fi drops for about half a second each time.
+
+If the band you picked is too weak to connect to where you are, it waits and tries again
+later instead of leaving you without Wi-Fi. If your router can give each band its own
+network name, that's the simplest fix of all.
+
+Tested on one iPhone 6s (iOS 15.8.5) and one router. What was tried along the way, what
+worked and what didn't: [docs/band-switching-research.md](docs/band-switching-research.md).
 
 ## Sharing the iPhone's VPN
 
@@ -138,13 +161,14 @@ by Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's n
   `ipconfig /renew` in Command Prompt does the same.
 - **Slow?** The computer gets about what the iPhone's own Wi-Fi gets. The **Wi-Fi** row
   in the app shows the band: on **2.4 GHz** everything is a lot slower than on 5 GHz.
-  Turn on **Force 5 GHz Wi-Fi**; the text under it says what it found. Where the 5 GHz
-  signal is weak, forcing it can make Wi-Fi slower or unstable instead.
+  Turn on **Force 5 GHz Wi-Fi**. Where the 5 GHz signal is weak, it can be slower or
+  less stable instead.
 - **Testing while the computer is also on Wi-Fi.** The computer may keep using
   its own Wi-Fi. Turn the computer's Wi-Fi off to test.
 - **Log and status files** are on the iPhone in `/var/mobile/Library/WiFiTether/`
   (`daemon.log`, `vpn.log` and `status.plist`). Attach them to an issue if
-  something fails. Logs are capped at 1 MB.
+  something fails. `daemon.log` stays under 1 MB; the part before that is kept in
+  `daemon.log.old`.
 
 ## How it works
 
@@ -186,19 +210,16 @@ address but has no route to the internet. WiFi Tether's background service
    While the switch is off, `wifitetherd` and the VPN helper wait for the notification
    `com.wifitether.changed` instead of checking every second.
 
-6. **Force 5 GHz.** An iPhone only looks for a better access point once its signal
-   drops below −70 dBm, so once it's on a router's 2.4 GHz radio it stays there; and
-   asking iOS to join the 5 GHz radio doesn't help, because iOS picks the radio itself.
-   So while this switch is on, `wifitetherd` puts the network's 2.4 GHz radios on
-   iOS's own BSS blacklist, the list iOS uses to avoid access points that misbehave
-   (`WiFiDeviceClientBssBlacklistCommandAndCopyResponse` in MobileWiFi; command
-   `kBssBlacklistSet`, reason 8, found by reading `wifid`). With 2.4 GHz blocked,
-   iOS's own joining and roaming pick 5 GHz and stay there. iOS drops these entries
-   after 5 minutes, so they're renewed every 4 while 5 GHz is usable, and removed
-   when it isn't (out of range, no Wi-Fi for 20 seconds, another network, switch
-   off), so the iPhone can always fall back to 2.4 GHz. If blocking isn't available
-   on an iPhone, it falls back to disconnecting and joining 5 GHz. Checked every 5
-   seconds; it runs whether sharing is on or off.
+6. **Wi-Fi band switches.** `wifitetherd` listens to the Wi-Fi driver's events, so it
+   knows the moment the router moves the iPhone, and remembers the forced band's radio
+   from a scan. It moves back with a hand-over first: a small add-on loaded into iOS's
+   Wi-Fi service (`src/roam`, loaded into `wifid`) asks for iOS's own roam to that band,
+   the same request iOS makes by itself when 2.4 GHz is poor. If that doesn't work, it
+   disconnects and joins the forced band's radio, telling iOS to avoid the other band's
+   radios for that one join. It backs off when the iPhone won't stay, and changes
+   nothing about the network or its saved settings. The add-on is built for 64-bit ARM
+   without pointer authentication (arm64), which is why the hand-over only works on
+   iPhone X and older; newer iPhones need an arm64e build.
 
 Everything is removed again when you switch sharing off or uninstall.
 
@@ -209,7 +230,8 @@ publishes the Sileo repo with GitHub Pages (`make-repo.sh`; needs
 **Settings → Pages → Source: GitHub Actions**), and publishes the `.deb` as a release named after the version in `VERSION`, with that version's
 notes from [CHANGELOG.md](CHANGELOG.md). Building the same version again replaces its
 `.deb`; bump `VERSION` and add a changelog entry to make a new release. To build locally on Linux, install `clang`, `lld`,
-`ldid` and `dpkg`, then run `bash build-linux.sh`.
+`ldid` and `dpkg`, then run `bash build-linux.sh`. It builds the app, the background
+service, the VPN helper and the hand-over add-on.
 
 The script downloads an iPhone SDK (from [theos/sdks](https://github.com/theos/sdks))
 and Apple's open-source XNU sources for the packet filter and other private headers.

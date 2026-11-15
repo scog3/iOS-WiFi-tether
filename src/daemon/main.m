@@ -29,7 +29,8 @@
 #include <signal.h>
 #include <unistd.h>
 #include <errno.h>
-#include <malloc/malloc.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
 #include "pfnat.h"
 
 #define WT_DIR      "/var/mobile/Library/WiFiTether"
@@ -275,6 +276,31 @@ static void trimLog(const char *path)
     struct stat st;
     if (stat(path, &st) == 0 && st.st_size > 1024 * 1024)
         truncate(path, 0);
+}
+
+/* daemon.log (this service's output, opened by launchd) stays under 1 MB:
+ * past that it's renamed daemon.log.old, replacing the previous one, and a
+ * new daemon.log starts. Never more than two files, about 2 MB in all, and
+ * the newest history is always kept. */
+static void rotateOwnLog(void)
+{
+    const char *path = WT_DIR "/daemon.log";
+    struct stat st;
+    int fd;
+
+    if (stat(path, &st) != 0 || st.st_size <= 1024 * 1024)
+        return;
+    rename(path, WT_DIR "/daemon.log.old");
+    fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0)
+        return;
+    fflush(stdout);
+    fflush(stderr);
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+    if (fd > STDERR_FILENO)
+        close(fd);
+    NSLog(@"wifitetherd: log: daemon.log reached 1 MB; the previous part is in daemon.log.old");
 }
 
 /* The DNS server iOS is using; falls back to 1.1.1.1. */
@@ -893,28 +919,28 @@ static NSString *usbWait(void)
 }
 
 /* ---------------------------------------------------------------------------
- * Keep Wi-Fi on 5 GHz (its own switch in the app; works with sharing off too).
+ * Wi-Fi band switches: Force 5 GHz / Force 2.4 GHz (their own switches in the
+ * app; they work with sharing off too, and only one is on at a time).
  *
- * An iPhone only looks for a better access point once its signal drops below
- * -70 dBm (Apple: "Wi-Fi roaming support in Apple devices"), so once it has
- * joined a router's 2.4 GHz radio it stays there, even right next to the
- * router, and asking it to join the 5 GHz radio doesn't help: iOS picks the
- * radio itself. So while the "Force 5 GHz" switch is on, WiFi Tether puts the
- * network's 2.4 GHz radios on iOS's own BSS blacklist (the list iOS uses to
- * avoid access points that misbehave; wifid's WiFiDeviceManagerProcessBss-
- * BlacklistCommandsAndCopyResponse, reached through MobileWiFi). With 2.4 GHz
- * blocked, iOS's own joining and roaming pick 5 GHz and stay there. iOS drops
- * entries after 5 minutes, so they're renewed every 4 minutes while 5 GHz is
- * usable, and removed when it isn't (out of range, Wi-Fi lost, other network,
- * switch off), so the iPhone can always fall back to 2.4 GHz.
- * Checked every 5 seconds. If blocking isn't available, it falls back to
- * disconnecting and joining 5 GHz, with a limit of 10 moves in 10 minutes.
+ * iOS has no band setting, and routers with one network name on both bands
+ * often push an iPhone from one band to the other ("band steering"). On the
+ * iPhone this was built on, the router's disconnect moves it to the other
+ * radio within milliseconds, before iOS does anything, so nothing on the phone
+ * can prevent it; WiFi Tether undoes it instead:
+ *   - Wi-Fi driver events (a kernel event socket, read-only) say the moment
+ *     the connection changes; there's also a check every 5 seconds.
+ *   - The forced band's radio is remembered from a scan.
+ *   - Move back by hand-over first: the add-on in wifid (src/roam) asks iOS
+ *     for its own roam to that band, with no disconnect.
+ *   - Fallback: disconnect, then join the remembered radio with the other
+ *     band's radios on that join's avoid list (BSS_BLACKLIST).
+ *   - Back off when it doesn't stick, so Wi-Fi stays usable.
  * Nothing about the network or its saved settings is changed.
+ * docs/band-switching-research.md has what was tried and what worked.
  * ------------------------------------------------------------------------- */
 #define WT_PREFER5     WT_DIR "/prefer-5ghz"
+#define WT_PREFER24    WT_DIR "/prefer-24ghz"
 #define B5_MIN_RSSI    (-85)   /* weaker than this, it can't really connect */
-#define B5_FLAP_MOVES  10      /* at most this many moves ... */
-#define B5_FLAP_WINDOW 600     /* ... in this many seconds */
 
 typedef void (*B5ScanCb)(void *dev, CFArrayRef results, void *err, void *ctx);
 typedef void (*B5JoinCb)(void *dev, void *net, CFDictionaryRef info, void *err, void *ctx);
@@ -933,7 +959,6 @@ static struct {
     CFStringRef  (*copyPassword)(void *);
     void         (*setPassword)(void *, CFStringRef);
     void         (*setPower)(void *, bool);
-    CFTypeRef    (*blacklist)(void *, CFDictionaryRef, void *);   /* BSS blacklist command */
     CFDictionaryRef (*copyRecord)(void *);
     void         (*setProp)(void *, CFStringRef, CFTypeRef);
 } B5;
@@ -941,22 +966,33 @@ static struct {
 static dispatch_source_t g_b5Timer;
 static int         g_b5Running;
 static NSString   *g_b5State = @"off";
-static int         g_b5Rssi;                 /* the 5 GHz radio's signal, for the app */
+static int         g_b5Rssi;                 /* the forced band's signal, for the app */
 static int         g_b5Busy;                 /* a scan or join is in progress */
 static time_t      g_b5BusySince, g_b5NextTry, g_b5LastJoin;
-static time_t      g_b5Moves[B5_FLAP_MOVES]; /* the last moves, oldest first */
 static int         g_b5JoinTries;            /* joins in this move */
 static int         g_b5Rescued;              /* already turned Wi-Fi off and on after this move */
 static CFStringRef g_b5SSID;                 /* the network the iPhone is on */
 static void       *g_b5Joining;              /* the radio being moved to (retained for the move) */
-static NSArray    *g_b5Blocked;              /* records of the 2.4 GHz radios we blocked */
-static NSArray    *g_b5Avoid;                /* this network's 2.4 GHz BSSIDs, 6-byte NSData each */
-static void       *g_b5Target;               /* the 5 GHz radio from the last scan (retained) */
+static NSArray    *g_b5Avoid;                /* this network's other-band BSSIDs, 6-byte NSData each */
+static void       *g_b5Target;               /* the forced band's radio from the last scan (retained) */
 static time_t      g_b5TargetAt, g_b5LandedAt;
 static int         g_b5QuickBacks;           /* times in a row iOS went back within 30 s */
-static NSString   *g_b5BlockedSSID;
-static time_t      g_b5BlockedAt, g_b5LastWifi, g_b5NextScan5;
-static int         g_b5Lock = -1;            /* blocking 2.4 GHz: -1 not tried, 0 unavailable, 1 works */
+static time_t      g_b5LastWifi, g_b5NextScan5;
+
+/* The hand-over add-on in wifid (src/roam): asks iOS to roam to 5 GHz
+ * without disconnecting. */
+#define WT_ROAM_REQUEST "com.wifitether.roam5"
+#define WT_ROAM_READY   "com.wifitether.roam5.ready"
+#define WT_ROAM_DONE    "com.wifitether.roam5.done"
+static int         g_b5HandReady = -1;       /* add-on loaded in wifid: -1 not checked, 0 no, 1 yes */
+static int         g_b5HandWorked;           /* a hand-over has worked since Force 5 GHz went on */
+static int         g_b5HandFails;            /* moves in a row where hand-overs didn't work */
+static int         g_b5HandTries;            /* hand-overs in this move */
+static time_t      g_b5HandOffUntil;         /* hand-overs paused (not working here) until */
+static int         g_b5Kicks, g_b5MoveCount;  /* since Force went on, for the status line */
+static time_t      g_b5LastKick, g_b5LastBeat;
+static int         g_b5ScanLearn;            /* the scan in flight only learns the radio (already on the band) */
+static int         g_b5LearnFails;           /* learning scans iOS turned down in a row */
 
 static void b5Tick(void);
 
@@ -1003,17 +1039,16 @@ static int b5Init(void)
     B5.copyPassword = dlsym(RTLD_DEFAULT, "WiFiNetworkCopyPassword");
     B5.setPassword = dlsym(RTLD_DEFAULT, "WiFiNetworkSetPassword");
     B5.setPower = dlsym(RTLD_DEFAULT, "WiFiManagerClientSetPower");
-    B5.blacklist = dlsym(RTLD_DEFAULT, "WiFiDeviceClientBssBlacklistCommandAndCopyResponse");
     B5.copyRecord = dlsym(RTLD_DEFAULT, "WiFiNetworkCopyRecord");
     B5.setProp = dlsym(RTLD_DEFAULT, "WiFiNetworkSetProperty");
     if (!create || !schedule || !B5.copyDevices || !B5.copyCurrent || !B5.getProp ||
         !B5.getSSID || !B5.scan || !B5.join) {
-        NSLog(@"wifitetherd: 5 GHz: iOS's Wi-Fi functions weren't found; not available");
+        NSLog(@"wifitetherd: band: iOS's Wi-Fi functions weren't found; not available");
         return 0;
     }
     B5.mgr = create(kCFAllocatorDefault, 0);
     if (!B5.mgr) {
-        NSLog(@"wifitetherd: 5 GHz: couldn't connect to iOS's Wi-Fi service");
+        NSLog(@"wifitetherd: band: couldn't connect to iOS's Wi-Fi service");
         return 0;
     }
     schedule(B5.mgr, CFRunLoopGetMain(), kCFRunLoopDefaultMode);   /* scan/join answers */
@@ -1040,6 +1075,18 @@ static int b5Band(void *net)
     if (f & 0x10)                return 5;
     if (f & 0x8)                 return 2;
     return 0;
+}
+
+/* The band Force keeps the iPhone on: 5 (Force 5 GHz) or 2 (Force 2.4 GHz).
+ * The rest of this code was written for 5 GHz; "on5" and the band5* status
+ * keys mean "on the wanted band" either way. */
+static int g_b5Want = 5;
+static int b5OnWant(int band) { return g_b5Want == 2 ? band == 2 : band >= 5; }
+static const char *b5WantName(void) { return g_b5Want == 2 ? "2.4 GHz" : "5 GHz"; }
+static const char *b5OtherName(void) { return g_b5Want == 2 ? "5 GHz" : "2.4 GHz"; }
+static const char *b5BandName(int band)
+{
+    return band < 0 ? "no Wi-Fi" : band == 2 ? "2.4 GHz" : band == 5 ? "5 GHz" : band == 6 ? "6 GHz" : "an unknown band";
 }
 
 static void b5Power(void)
@@ -1074,141 +1121,6 @@ static NSData *b5BSSIDBytes(NSString *s)
     return [NSData dataWithBytes:b length:6];
 }
 
-/* A scan record as a plain property list: the request travels to wifid as
- * one, and wifid matches it to the saved network by name, mode and security. */
-static NSDictionary *b5PlistOnly(NSDictionary *rec)
-{
-    NSMutableDictionary *out = [NSMutableDictionary dictionary];
-    [rec enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) {
-        if ([k isKindOfClass:NSString.class] &&
-            [NSPropertyListSerialization propertyList:v isValidForFormat:NSPropertyListBinaryFormat_v1_0])
-            out[k] = v;
-    }];
-    return out;
-}
-
-/* One BSS blacklist command to iOS's Wi-Fi service. The answer lists every
- * blocked radio (keys networks, reasons, timestamps, reasonData). */
-/* Writes the first bytes of an iOS function's machine code to the log, once,
- * so its exact calling convention can be read off if a call goes wrong. */
-static void b5LogCode(const char *name, const void *fn)
-{
-    const unsigned char *p = fn;
-    if (!p)
-        return;
-    NSLog(@"wifitetherd: 5 GHz: code of %s at %p", name, fn);
-    for (int off = 0; off < 640; off += 32) {
-        NSMutableString *line = [NSMutableString stringWithCapacity:64];
-        for (int i = 0; i < 32; i++)
-            [line appendFormat:@"%02x", p[off + i]];
-        NSLog(@"wifitetherd: 5 GHz: code +%03x %@", off, line);
-    }
-}
-
-/* Only a pointer to a live heap block can be a CF object worth looking at;
- * anything else (a flag, a stray register) is never dereferenced. */
-static int b5IsHeapObject(const void *p)
-{
-    return p && (uintptr_t)p >= 0x100000000ULL && !((uintptr_t)p & 7) && malloc_zone_from_ptr(p) != NULL;
-}
-
-/* The call takes a third argument that iOS writes a single byte to (0.4.13's
- * crash: a byte write to whatever happened to be in that register). It gets
- * a zeroed 8-byte slot, so whether that byte is a yes/no or the start of a
- * pointer, nothing is written out of bounds. The answer dictionary is taken
- * from the return value or the slot, only after checking it's a live object.
- * All of it runs inside the crash guard. */
-static NSDictionary *b5BlacklistCommand(NSString *command, NSDictionary *record, int *flag)
-{
-    NSMutableDictionary *req = [NSMutableDictionary dictionaryWithObject:command forKey:@"command"];
-    uint64_t slots[8] = {0};   /* room to spare, in case iOS writes more than a byte */
-    uint64_t slot;
-    CFTypeRef r;
-    NSDictionary *answer = nil;
-    static int calls;
-
-    if (record)
-        req[@"network"] = record;
-    if ([command isEqualToString:@"kBssBlacklistSet"])
-        req[@"reason"] = @8L;   /* the one reason wifid accepts for this command */
-    if (!calls)
-        b5LogCode("WiFiDeviceClientBssBlacklistCommandAndCopyResponse", (const void *)B5.blacklist);
-    b5GuardBegin("blacklist");
-    r = B5.blacklist(B5.dev, (__bridge CFDictionaryRef)req, slots);
-    slot = slots[0];
-    if (calls++ < 3)
-        NSLog(@"wifitetherd: 5 GHz: %@ returned %p, third argument now 0x%llx", command, r, slot);
-    if (b5IsHeapObject(r) && CFGetTypeID(r) == CFDictionaryGetTypeID())
-        answer = CFBridgingRelease(r);
-    else if (b5IsHeapObject((const void *)(uintptr_t)slot) &&
-             CFGetTypeID((CFTypeRef)(uintptr_t)slot) == CFDictionaryGetTypeID())
-        answer = CFBridgingRelease((CFTypeRef)(uintptr_t)slot);
-    if (flag)
-        *flag = (int)(slot & 0xff);
-    b5GuardEnd();
-    return answer;
-}
-
-/* Blocks these 2.4 GHz radios (or renews the block). Returns 1 if iOS took them. */
-static int b5Block(NSArray *records, NSString *ssid)
-{
-    int took = 0, logged = 0;
-
-    if (!B5.blacklist || !records.count)
-        return 0;
-    for (NSDictionary *rec in records) {
-        int flag = 0;
-        NSDictionary *resp = b5BlacklistCommand(@"kBssBlacklistSet", rec, &flag);
-        NSArray *nets = [resp[@"networks"] isKindOfClass:NSArray.class] ? resp[@"networks"] : nil;
-        NSString *mine = b5Str(rec, @"BSSID");
-        int found = 0;
-        /* Listed by its BSSID, or (if iOS leaves that out of its answer) by the network's name. */
-        for (id n in nets) {
-            NSString *b = [n isKindOfClass:NSDictionary.class] ? b5Str(n, @"BSSID") : nil;
-            NSString *name = [n isKindOfClass:NSDictionary.class] ? b5Str(n, @"SSID_STR") : nil;
-            if ((b && mine && [b caseInsensitiveCompare:mine] == NSOrderedSame) ||
-                (!b && name && [name isEqualToString:ssid]))
-                found = 1;
-        }
-        if (!resp && flag == 1)
-            found = 1;   /* no answer dictionary, but iOS said yes */
-        took += found;
-        if (!took && !logged++ && g_b5Lock != 1) {
-            NSString *d = [[resp.description componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]
-                           componentsJoinedByString:@" "];
-            NSLog(@"wifitetherd: 5 GHz: blocking 2.4 GHz: iOS answered %@",
-                  d.length > 500 ? [d substringToIndex:500] : (d ?: @"nothing"));
-        }
-    }
-    if (took) {
-        if (g_b5Lock != 1 || !g_b5Blocked)
-            NSLog(@"wifitetherd: 5 GHz: blocked %lu 2.4 GHz radio(s) of this network, so iOS stays on 5 GHz",
-                  (unsigned long)records.count);
-        g_b5Lock = 1;
-        g_b5Blocked = records;
-        g_b5BlockedSSID = ssid;
-        g_b5BlockedAt = time(NULL);
-        return 1;
-    }
-    if (g_b5Lock != 0)
-        NSLog(@"wifitetherd: 5 GHz: iOS didn't accept blocking 2.4 GHz on this iPhone; moving to 5 GHz the old way");
-    g_b5Lock = 0;
-    return 0;
-}
-
-/* Lifts our block, so the iPhone can use 2.4 GHz again. */
-static void b5Unblock(const char *why)
-{
-    if (!g_b5Blocked)
-        return;
-    NSLog(@"wifitetherd: 5 GHz: unblocking 2.4 GHz (%s)", why);
-    if (B5.blacklist && B5.dev)
-        for (NSDictionary *rec in g_b5Blocked)
-            b5BlacklistCommand(@"kBssBlacklistClear", rec, NULL);
-    g_b5Blocked = nil;
-    g_b5BlockedSSID = nil;
-}
-
 static void b5EndMove(void)
 {
     if (g_b5Joining) {
@@ -1227,7 +1139,7 @@ static int b5CurrentBand(void)
     if (!cur)
         return -1;
     band = b5Band(cur);
-    if (band >= 5)
+    if (b5OnWant(band))
         g_b5Rssi = b5Int(cur, CFSTR("RSSI"));
     CFRelease(cur);
     return band;
@@ -1242,11 +1154,21 @@ static int b5Ms(void)
     return (int)((CFAbsoluteTimeGetCurrent() - g_b5T0) * 1000);
 }
 
-/* After a join: watch for up to 10 seconds whether the iPhone ends up on
- * 5 GHz. If iOS's own auto-join wins the race back to 2.4 GHz, try once more.
- * Every try drops Wi-Fi for a moment, so a move that doesn't work backs off:
- * 1, then 5, then 15 minutes. */
-static void b5WatchLanding(int checks)
+static void b5DropTarget(void)
+{
+    if (g_b5Target)
+        CFRelease(g_b5Target);
+    g_b5Target = NULL;
+}
+
+/* After a join: watch every 0.1 s whether the iPhone ends up on 5 GHz. If it
+ * settles on 2.4 GHz for a second (the router refused 5 GHz, or iOS's own
+ * auto-join won), or gets nowhere for 10 seconds, the try failed. The router
+ * can refuse 5 GHz for several seconds after it kicks the iPhone off, and
+ * each try drops Wi-Fi for a moment, so tries are spaced out: up to 3, then
+ * 2 and 8 seconds apart. A move that still doesn't work backs off: 1, then
+ * 5, then 15 minutes. */
+static void b5WatchLanding(int checks, int on24)
 {
     int band = b5CurrentBand();
 
@@ -1254,33 +1176,44 @@ static void b5WatchLanding(int checks)
         b5EndMove();
         return;
     }
-    if (band >= 5) {
-        NSLog(@"wifitetherd: 5 GHz: on 5 GHz (%d ms after disconnecting)", b5Ms());
+    if (b5OnWant(band)) {
+        NSLog(@"wifitetherd: band: on %s (%d ms after disconnecting)", b5WantName(), b5Ms());
         g_b5LandedAt = time(NULL);
         g_b5State = @"on5";
         g_b5FailStreak = 0;
+        g_b5NextTry = 0;   /* the next kick is answered straight away */
         b5EndMove();
         return;
     }
-    if (checks < 20) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-            b5WatchLanding(checks + 1);
+    on24 = band > 0 && !b5OnWant(band) ? on24 + 1 : 0;   /* settled on the other band */
+    if (on24 < 10 && checks < 100) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            b5WatchLanding(checks + 1, on24);
         });
         return;
     }
-    if (g_b5JoinTries < 2) {
-        NSLog(@"wifitetherd: 5 GHz: ended up on %s; trying once more", band < 0 ? "no Wi-Fi" : "2.4 GHz");
-        b5JoinNow();
+    if (g_b5JoinTries < 3) {
+        int gap = g_b5JoinTries == 1 ? 2 : 8;
+        NSLog(@"wifitetherd: band: try %d ended up on %s; trying again in %d s", g_b5JoinTries,
+              b5BandName(band), gap);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, gap * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            if (!g_b5Running || !g_b5Joining) {
+                b5EndMove();
+                return;
+            }
+            b5JoinNow();
+        });
         return;
     }
     {
         int wait = g_b5FailStreak == 0 ? 60 : g_b5FailStreak == 1 ? 300 : 900;
         g_b5FailStreak++;
-        NSLog(@"wifitetherd: 5 GHz: ended up on %s again; trying in %d minute(s)",
-              band < 0 ? "no Wi-Fi" : "2.4 GHz", wait / 60);
+        NSLog(@"wifitetherd: band: ended up on %s again; trying in %d minute(s)",
+              b5BandName(band), wait / 60);
         g_b5State = @"notsticking";
         g_b5NextTry = time(NULL) + wait;
     }
+    b5DropTarget();   /* maybe the radio moved channel: scan afresh next time */
     b5EndMove();
 }
 
@@ -1295,18 +1228,19 @@ static void b5Joined(void *dev, void *net, CFDictionaryRef info, void *err, void
                   componentsJoinedByString:@" "];
         if (answer.length > 600)
             answer = [answer substringToIndex:600];
-        NSLog(@"wifitetherd: 5 GHz: join answer: channel %d %@", ch, answer);
+        NSLog(@"wifitetherd: band: join answer: channel %d %@", ch, answer);
     }
     b5GuardEnd();
     if (err) {
-        NSLog(@"wifitetherd: 5 GHz: iOS couldn't join the 5 GHz radio (error %p, %d ms)", err, b5Ms());
+        NSLog(@"wifitetherd: band: iOS couldn't join the %s radio (error %p, %d ms)", b5WantName(), err, b5Ms());
         g_b5State = @"failed";
         g_b5NextTry = time(NULL) + 120;
+        b5DropTarget();
         b5EndMove();
         return;
     }
-    NSLog(@"wifitetherd: 5 GHz: join answered after %d ms", b5Ms());
-    b5WatchLanding(0);
+    NSLog(@"wifitetherd: band: join answered after %d ms", b5Ms());
+    b5WatchLanding(0, 0);
 }
 
 /* Join only once the disconnect has actually happened: a join sent while
@@ -1323,13 +1257,13 @@ static void b5JoinWhenDisconnected(int waited)
     if (cur)
         CFRelease(cur);
     if (cur && waited < 3000) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 40 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-            b5JoinWhenDisconnected(waited + 40);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            b5JoinWhenDisconnected(waited + 10);
         });
         return;
     }
-    NSLog(@"wifitetherd: 5 GHz: try %d: %s after %d ms; joining 5 GHz", g_b5JoinTries,
-          cur ? "still connected" : "disconnected", b5Ms());
+    NSLog(@"wifitetherd: band: try %d: %s after %d ms; joining %s", g_b5JoinTries,
+          cur ? "still connected" : "disconnected", b5Ms(), b5WantName());
     b5GuardBegin("join");
     B5.join(B5.dev, g_b5Joining, b5Joined, NULL);
 }
@@ -1373,7 +1307,7 @@ static void b5Join(void *net, int rssi)
         if (known)
             CFRelease(known);
     }
-    NSLog(@"wifitetherd: 5 GHz: on 2.4 GHz; moving to the 5 GHz radio (channel %d, %d dBm)%s",
+    NSLog(@"wifitetherd: band: on %s; moving to the %s radio (channel %d, %d dBm)%s", b5OtherName(), b5WantName(),
           b5Int(net, CFSTR("CHANNEL")), rssi, havePw ? "" : ", saved password not readable");
     g_b5State = @"switching";
     g_b5NextTry = time(NULL) + 30;
@@ -1388,9 +1322,125 @@ static void b5Join(void *net, int rssi)
     if (g_b5Avoid.count && B5.setProp) {
         NSArray *avoid = g_b5Avoid.count > 3 ? [g_b5Avoid subarrayWithRange:NSMakeRange(0, 3)] : g_b5Avoid;
         B5.setProp(g_b5Joining, CFSTR("BSS_BLACKLIST"), (__bridge CFTypeRef)@{ @"BSS_BLACKLIST_BSSIDS": avoid });
-        NSLog(@"wifitetherd: 5 GHz: this join avoids %lu 2.4 GHz radio(s)", (unsigned long)avoid.count);
+        NSLog(@"wifitetherd: band: this join avoids %lu %s radio(s)", (unsigned long)avoid.count, b5OtherName());
     }
     b5JoinNow();
+}
+
+/* Is the hand-over add-on loaded in wifid? It publishes wifid's process id. */
+static int b5HandoverReady(void)
+{
+    int tok, ready = 0;
+    uint64_t pid = 0;
+
+    if (notify_register_check(WT_ROAM_READY, &tok) == NOTIFY_STATUS_OK) {
+        notify_get_state(tok, &pid);
+        notify_cancel(tok);
+    }
+    ready = pid > 1 && kill((pid_t)pid, 0) == 0;
+    if (ready != g_b5HandReady)
+        NSLog(@"wifitetherd: band: hand-over add-on %s", ready
+              ? [NSString stringWithFormat:@"loaded in iOS's Wi-Fi service (pid %llu)", pid].UTF8String
+              : "not loaded in iOS's Wi-Fi service; moving by disconnecting and rejoining");
+    g_b5HandReady = ready;
+    return ready;
+}
+
+/* The add-on's answer to each request, for the log. */
+static void b5HandoverListen(void)
+{
+    static int tok = -1;
+
+    if (tok >= 0)
+        return;
+    notify_register_dispatch(WT_ROAM_DONE, &tok, dispatch_get_main_queue(), ^(int t) {
+        uint64_t st = 0;
+        notify_get_state(t, &st);
+        if ((st & 0xff) != 1)
+            NSLog(@"wifitetherd: band: the add-on couldn't ask for a hand-over (request %llu: %s)", st >> 8,
+                  (st & 0xff) == 2 ? "iOS's roam manager wasn't found" : "unknown answer");
+    });
+}
+
+static void b5Join(void *net, int rssi);
+static void b5HandoverTry(int rssi);
+
+/* After a hand-over request: watch every 50 ms, for 1.5 seconds, whether the
+ * iPhone is on 5 GHz. If not: once hand-overs have worked here, try again
+ * (2, then 4 seconds later; a hand-over doesn't drop Wi-Fi, so it's cheap),
+ * then fall back to disconnecting and joining. */
+static void b5HandWatch(int checks, int rssi)
+{
+    int band = b5CurrentBand();
+
+    if (!g_b5Running || !g_b5Joining) {
+        b5EndMove();
+        return;
+    }
+    if (b5OnWant(band)) {
+        NSLog(@"wifitetherd: band: handed over to %s in %d ms, without disconnecting", b5WantName(), b5Ms());
+        g_b5LandedAt = time(NULL);
+        g_b5State = @"on5";
+        g_b5FailStreak = 0;
+        g_b5NextTry = 0;
+        g_b5HandWorked = 1;
+        g_b5HandFails = 0;
+        b5EndMove();
+        return;
+    }
+    if (checks < 30) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            b5HandWatch(checks + 1, rssi);
+        });
+        return;
+    }
+    if (g_b5HandWorked && g_b5HandTries < 3) {
+        int gap = g_b5HandTries == 1 ? 2 : 4;
+        NSLog(@"wifitetherd: band: hand-over %d didn't move it (on %s); trying again in %d s", g_b5HandTries,
+              b5BandName(band), gap);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, gap * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            if (!g_b5Running || !g_b5Joining) {
+                b5EndMove();
+                return;
+            }
+            if (b5OnWant(b5CurrentBand())) {   /* got there in the meantime */
+                b5HandWatch(0, rssi);
+                return;
+            }
+            b5HandoverTry(rssi);
+        });
+        return;
+    }
+    if (++g_b5HandFails >= 3) {
+        NSLog(@"wifitetherd: band: hand-overs aren't working here; disconnecting and rejoining for the next 10 minutes");
+        g_b5HandOffUntil = time(NULL) + 600;
+        g_b5HandFails = 0;
+    }
+    NSLog(@"wifitetherd: band: hand-over didn't move it (on %s after %d ms); disconnecting and rejoining instead",
+          b5BandName(band), b5Ms());
+    {
+        void *net = (void *)CFRetain(g_b5Joining);   /* b5Join replaces g_b5Joining */
+        b5Join(net, rssi);
+        CFRelease(net);
+    }
+}
+
+static void b5HandoverTry(int rssi)
+{
+    g_b5HandTries++;
+    g_b5BusySince = time(NULL);
+    g_b5T0 = CFAbsoluteTimeGetCurrent();
+    NSLog(@"wifitetherd: band: hand-over %d: asking iOS to roam to %s", g_b5HandTries, b5WantName());
+    {
+        /* The band preference rides on the request's state: 1 = 2.4 GHz, 2 = 5 GHz. */
+        static int tok = -1;
+        if (tok < 0 && notify_register_check(WT_ROAM_REQUEST, &tok) != NOTIFY_STATUS_OK)
+            tok = -1;
+        if (tok >= 0)
+            notify_set_state(tok, g_b5Want == 2 ? 1 : 2);
+    }
+    notify_post(WT_ROAM_REQUEST);
+    b5HandWatch(0, rssi);
 }
 
 /* Moves to 5 GHz. iOS switching back after a while is expected where 5 GHz is
@@ -1403,7 +1453,7 @@ static void b5Move(void *net, int rssi)
 
     if (g_b5LandedAt && now - g_b5LandedAt < 30) {
         if (++g_b5QuickBacks >= 5) {
-            NSLog(@"wifitetherd: 5 GHz: iOS keeps going straight back to 2.4 GHz; pausing for 5 minutes");
+            NSLog(@"wifitetherd: band: the iPhone keeps going straight back to %s; pausing for 5 minutes", b5OtherName());
             g_b5QuickBacks = 0;
             g_b5LandedAt = 0;
             g_b5State = @"flapping";
@@ -1412,6 +1462,22 @@ static void b5Move(void *net, int rssi)
         }
     } else {
         g_b5QuickBacks = 0;
+    }
+    g_b5MoveCount++;
+    /* Hand-over first, where the add-on is there: no disconnect. */
+    if (now >= g_b5HandOffUntil && b5HandoverReady()) {
+        void *old = g_b5Joining;
+        g_b5Joining = (void *)CFRetain(net);
+        if (old)
+            CFRelease(old);
+        NSLog(@"wifitetherd: band: on %s; handing over to the %s radio (channel %d, %d dBm)",
+              b5OtherName(), b5WantName(), b5Int(net, CFSTR("CHANNEL")), rssi);
+        g_b5State = @"switching";
+        g_b5NextTry = now + 30;
+        g_b5Busy = 1;
+        g_b5HandTries = 0;
+        b5HandoverTry(rssi);
+        return;
     }
     b5Join(net, rssi);
 }
@@ -1431,15 +1497,28 @@ static void b5ScannedBody(CFArrayRef results, void *err)
     time_t now = time(NULL);
     void *best = NULL;
     int bestRssi = -200, n24 = 0, n5 = 0, band;
-    NSMutableArray *radios24 = [NSMutableArray array];
     NSMutableArray *avoid = [NSMutableArray array];
+    int learn = g_b5ScanLearn;
 
     g_b5Busy = 0;
+    g_b5ScanLearn = 0;
     if (!g_b5Running)
         return;
     if (!results || CFGetTypeID(results) != CFArrayGetTypeID()) {
-        NSLog(@"wifitetherd: 5 GHz: scan failed (error %p); trying again in 15 seconds", err);
-        g_b5NextTry = now + 15;   /* usually busy: iOS is scanning or roaming itself */
+        if (learn) {
+            /* Only learning the radio: iOS on this iPhone often turns these
+             * down (busy, 0x10). Give up after 3; the next move learns it. */
+            if (++g_b5LearnFails < 3)
+                NSLog(@"wifitetherd: band: scan to learn the %s radio turned down (error %p); trying again in "
+                      @"30 seconds", b5WantName(), err);
+            else if (g_b5LearnFails == 3)
+                NSLog(@"wifitetherd: band: iOS keeps turning down scans while on %s; the radio will be "
+                      @"learned at the next move instead", b5WantName());
+            g_b5NextScan5 = now + (g_b5LearnFails >= 3 ? 1800 : 30);
+            return;
+        }
+        NSLog(@"wifitetherd: band: scan failed (error %p); trying again soon", err);
+        g_b5NextTry = now + 5;      /* usually busy: iOS is scanning or roaming itself */
         return;
     }
     for (CFIndex i = 0; i < CFArrayGetCount(results); i++) {
@@ -1450,102 +1529,83 @@ static void b5ScannedBody(CFArrayRef results, void *err)
             continue;
         band = b5Band(net);
         rssi = b5Int(net, CFSTR("RSSI"));
-        if (band == 2) {
+        if (band == 2)
             n24++;
+        else if (band >= 5)
+            n5++;
+        /* avoid: this network's radios on the other band */
+        if (band > 0 && !b5OnWant(band)) {
             if (B5.copyRecord) {
                 NSDictionary *rec = CFBridgingRelease(B5.copyRecord(net));
                 if ([rec isKindOfClass:NSDictionary.class] && b5Str(rec, @"BSSID")) {
                     NSData *bytes = b5BSSIDBytes(b5Str(rec, @"BSSID"));
-                    [radios24 addObject:b5PlistOnly(rec)];
                     if (bytes)
                         [avoid addObject:bytes];
                 }
             }
         }
-        if (band < 5)
+        if (!b5OnWant(band))
             continue;
-        n5++;
         if (rssi > bestRssi) {
             bestRssi = rssi;
             best = net;
         }
     }
+    if (!best && n24 + n5 == 0) {
+        /* Didn't even see the network the iPhone is on: iOS was busy or
+         * the iPhone was asleep. Not a sign that the band is out of range. */
+        if (learn) {
+            g_b5NextScan5 = now + (++g_b5LearnFails >= 3 ? 1800 : 30);
+            return;
+        }
+        NSLog(@"wifitetherd: band: the scan didn't see this network at all; trying again in 5 seconds");
+        g_b5NextTry = now + 5;
+        return;
+    }
+    if (learn)
+        g_b5LearnFails = 0;
     if (!best) {
         static int logged;
         if (!logged++)
-            NSLog(@"wifitetherd: 5 GHz: this network has no 5 GHz radio in range (%d on 2.4 GHz)", n24);
-        b5Unblock("no 5 GHz in range");
+            NSLog(@"wifitetherd: band: this network has no %s radio in range (%d on 2.4 GHz, %d on 5 GHz)",
+                  b5WantName(), n24, n5);
         g_b5State = @"no5";
         g_b5NextTry = now + 300;
         return;
     }
     g_b5Rssi = bestRssi;
-    NSLog(@"wifitetherd: 5 GHz: this network has %d radio(s) on 2.4 GHz and %d on 5 GHz in range; "
-          @"the best 5 GHz one is at %d dBm", n24, n5, bestRssi);
+    NSLog(@"wifitetherd: band: this network has %d radio(s) on 2.4 GHz and %d on 5 GHz in range; "
+          @"the best %s one is at %d dBm", n24, n5, b5WantName(), bestRssi);
     if (bestRssi < B5_MIN_RSSI) {
-        NSLog(@"wifitetherd: 5 GHz: the 5 GHz radio is too weak to connect to here (%d dBm)", bestRssi);
-        b5Unblock("5 GHz too weak");
+        NSLog(@"wifitetherd: band: the %s radio is too weak to connect to here (%d dBm)", b5WantName(), bestRssi);
         g_b5State = @"weak";
         g_b5NextTry = now + 120;
         return;
     }
     g_b5Avoid = avoid;
-    /* Block this network's 2.4 GHz radios, so iOS itself joins and stays on 5 GHz. */
-    if (g_b5Lock != 0 && radios24.count)
-        b5Block(radios24, (__bridge NSString *)g_b5SSID);
-    band = b5CurrentBand();
-    if (band >= 5) {   /* already on 5 GHz: nothing to move */
-        g_b5State = @"on5";
-        return;
-    }
-    /* Remember this radio, so when iOS switches back later it's moved straight
-     * back without waiting for another scan. */
+    /* Remember this radio, so when the iPhone is pushed back to 2.4 GHz
+     * later it's moved straight back without waiting for another scan. */
     if (g_b5Target)
         CFRelease(g_b5Target);
     g_b5Target = (void *)CFRetain(best);
     g_b5TargetAt = now;
+    band = b5CurrentBand();
+    if (b5OnWant(band)) {   /* already on the wanted band: nothing to move */
+        g_b5State = @"on5";
+        return;
+    }
     b5Move(best, bestRssi);
 }
 
 static void b5TickBody(void);
 
-/* wifid only keeps a lasting block when the Wi-Fi chip lists capability 84
- * in deviceCapabilities (wifid sub "BssBlacklist not supported on this platform").
- * Logged once, so a log shows which case an iPhone is. */
-static void b5LogCapability(void)
-{
-    static int done;
-    CFTypeRef (*copyProp)(void *, CFStringRef);
-    CFTypeRef caps;
-    int n = 84, has = -1;
-
-    if (done++ || !B5.dev)
-        return;
-    copyProp = dlsym(RTLD_DEFAULT, "WiFiDeviceClientCopyProperty");
-    if (!copyProp)
-        return;
-    b5GuardBegin("capabilities");
-    caps = copyProp(B5.dev, CFSTR("deviceCapabilities"));
-    if (b5IsHeapObject(caps) && CFGetTypeID(caps) == CFArrayGetTypeID()) {
-        CFNumberRef want = CFNumberCreate(NULL, kCFNumberIntType, &n);
-        has = CFArrayContainsValue(caps, CFRangeMake(0, CFArrayGetCount(caps)), want) ? 1 : 0;
-        CFRelease(want);
-    }
-    if (b5IsHeapObject(caps))
-        CFRelease(caps);
-    b5GuardEnd();
-    NSLog(@"wifitetherd: 5 GHz: Wi-Fi chip supports a lasting radio block: %s",
-          has < 0 ? "couldn't tell" : has ? "yes" : "no");
-}
-
 static void b5Tick(void)
 {
     if (!g_b5Running || g_b5Crashed)
         return;
+    rotateOwnLog();   /* the band switches log even with sharing off */
     b5GuardBegin("check");
     b5TickBody();
-    if (!g_b5Busy)
-        b5LogCapability();
     if (!g_b5Busy)   /* a scan or join in progress keeps the mark until it answers */
         b5GuardEnd();
 }
@@ -1580,26 +1640,18 @@ static void b5TickBody(void)
         return;
     }
     if (g_b5Busy && now - g_b5BusySince > 30) {
-        NSLog(@"wifitetherd: 5 GHz: no answer from iOS's Wi-Fi service; trying again later");
+        NSLog(@"wifitetherd: band: no answer from iOS's Wi-Fi service; trying again later");
         b5EndMove();
         g_b5State = @"failed";
         g_b5NextTry = now + 120;
     }
 
     cur = B5.copyCurrent(B5.dev);
-    if (!cur && g_b5Blocked && g_b5LastWifi && now - g_b5LastWifi >= 20) {
-        /* No Wi-Fi for 20 seconds with 2.4 GHz blocked: 5 GHz is out of reach.
-         * Unblock and let iOS reconnect however it can. */
-        b5Unblock("no Wi-Fi for 20 seconds");
-        g_b5QuietUntil = now + 30;
-        b5Power();
-        g_b5NextTry = now + 120;
-    }
     if (!cur) {
         /* A move left Wi-Fi disconnected: turn Wi-Fi off and on so iOS
          * reconnects by itself. Once per move. */
         if (g_b5LastJoin && !g_b5Rescued && now - g_b5LastJoin >= 15 && now - g_b5LastJoin < 90) {
-            NSLog(@"wifitetherd: 5 GHz: Wi-Fi didn't reconnect after the move; turning it off and on");
+            NSLog(@"wifitetherd: band: Wi-Fi didn't reconnect after the move; turning it off and on");
             g_b5Rescued = 1;
             g_b5QuietUntil = now + 30;
             b5Power();
@@ -1610,43 +1662,46 @@ static void b5TickBody(void)
     }
     g_b5LastWifi = now;
     band = b5Band(cur);
+    if (now - g_b5LastBeat >= 300) {   /* a status line every 5 minutes, so a quiet log still says something */
+        g_b5LastBeat = now;
+        NSLog(@"wifitetherd: band: status: on %s at %d dBm (channel %d); %d kick(s) and %d move(s) since Force %s "
+              @"went on%@", b5BandName(band), b5Int(cur, CFSTR("RSSI")), b5Int(cur, CFSTR("CHANNEL")), g_b5Kicks,
+              g_b5MoveCount, b5WantName(), g_b5LastKick
+              ? [NSString stringWithFormat:@"; last kick %ld min ago", (long)(now - g_b5LastKick) / 60] : @"");
+    }
     {
         CFStringRef s = B5.getSSID(cur);
         if (s && (!g_b5SSID || CFStringCompare(s, g_b5SSID, 0) != kCFCompareEqualTo)) {
             if (g_b5SSID)
                 CFRelease(g_b5SSID);
             g_b5SSID = CFStringCreateCopy(NULL, s);
-            memset(g_b5Moves, 0, sizeof(g_b5Moves));   /* new network: fresh start */
             g_b5NextTry = 0;
             g_b5NextScan5 = 0;
             if (g_b5Target)
                 CFRelease(g_b5Target);
             g_b5Target = NULL;
             g_b5LandedAt = 0;
-            b5Unblock("joined another network");
+            g_b5LearnFails = 0;
         }
     }
-    if (band >= 5)
+    if (b5OnWant(band))
         g_b5Rssi = b5Int(cur, CFSTR("RSSI"));
     CFRelease(cur);
 
-    /* iOS forgets blocks after 5 minutes: renew every 4. */
-    if (g_b5Blocked && now - g_b5BlockedAt >= 240 && !g_b5Busy)
-        b5Block(g_b5Blocked, g_b5BlockedSSID);
-
-    if (band >= 5) {
+    if (b5OnWant(band)) {
         if (![g_b5State isEqualToString:@"on5"] && g_b5LastJoin)
-            NSLog(@"wifitetherd: 5 GHz: on 5 GHz");
+            NSLog(@"wifitetherd: band: on %s", b5WantName());
         g_b5State = @"on5";
-        /* Already on 5 GHz but 2.4 GHz not blocked yet: scan once to find its
-         * radios, so iOS can't switch back. */
-        if (!g_b5Blocked && g_b5Lock != 0 && B5.blacklist && !g_b5Busy && now >= g_b5NextScan5) {
+        /* Already on the forced band: scan once to learn its radio, so a
+         * kick to the other band is answered without a scan. */
+        if (!g_b5Target && !g_b5Busy && now >= g_b5NextScan5) {
             g_b5NextScan5 = now + 300;
             if (!scanOptions)
                 scanOptions = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks,
                                                  &kCFTypeDictionaryValueCallBacks);
             g_b5Busy = 1;
             g_b5BusySince = now;
+            g_b5ScanLearn = 1;
             b5GuardBegin("scan");
             B5.scan(B5.dev, scanOptions, b5Scanned, NULL);
         }
@@ -1656,14 +1711,15 @@ static void b5TickBody(void)
         g_b5State = @"unknown";
         return;
     }
-    /* On 2.4 GHz. */
+    /* On the other band. */
     if (g_b5LandedAt && [g_b5State isEqualToString:@"on5"]) {
-        NSLog(@"wifitetherd: 5 GHz: iOS switched back to 2.4 GHz after %ld s", (long)(now - g_b5LandedAt));
+        NSLog(@"wifitetherd: band: on %s again after %ld s on %s", b5BandName(band), (long)(now - g_b5LandedAt),
+              b5WantName());
         g_b5State = @"searching";
     }
     if (g_b5Busy || now < g_b5NextTry || !g_b5SSID)
         return;
-    if (g_b5Target && now - g_b5TargetAt < 600 && g_b5Lock == 0) {
+    if (g_b5Target) {
         g_b5State = @"switching";
         b5Move(g_b5Target, g_b5Rssi);
         return;
@@ -1680,17 +1736,184 @@ static void b5TickBody(void)
     B5.scan(B5.dev, scanOptions, b5Scanned, NULL);
 }
 
-/* Starts or stops the 10-second check to match the app's switch. */
-static void b5Update(void)
+static NSString *hexOf(const void *p, size_t n)
+{
+    NSMutableString *h = [NSMutableString stringWithCapacity:n * 2];
+    for (size_t i = 0; i < n; i++)
+        [h appendFormat:@"%02x", ((const unsigned char *)p)[i]];
+    return h;
+}
+
+/* ---------------------------------------------------------------------------
+ * While Force 5 GHz is on, log the Wi-Fi driver's events (the kernel event
+ * class wifid listens to: vendor Apple, class 6, subclass 1; codes from
+ * apple80211_var.h). A switch to 2.4 GHz that the chip does itself shows up
+ * as ROAM_START / ROAMED / ROAM_END; one iOS (wifid) decides on is a new
+ * association (ASSOC_DONE) or a steering request from the router
+ * (BSS_STEERING_REQUEST). After each event the current channel is logged.
+ * ------------------------------------------------------------------------- */
+struct wt_kev_request { uint32_t vendor_code, kev_class, kev_subclass; };
+struct wt_kern_event_msg {
+    uint32_t total_size, vendor_code, kev_class, kev_subclass, id, event_code;
+    unsigned char data[];
+};
+static dispatch_source_t g_evSrc;
+static unsigned          g_b5EvGen;
+
+/* The connection just changed (the router disconnecting the iPhone, a new
+ * radio, the link going down or up): check straight away instead of at the
+ * next 5-second check, so a kick back to 2.4 GHz is undone within about a
+ * second. iOS's view of the connection takes a moment to catch up, so it
+ * checks at 0.1, 0.25, 0.5, 1, 2 and 3 seconds; a burst of events counts once (only the
+ * last one's checks run). Events during a move of our own are ignored. */
+static void b5EventCheck(void)
+{
+    static const int64_t at[] = {100, 250, 500, 1000, 2000, 3000};
+    unsigned gen;
+
+    if (!g_b5Running || g_b5Crashed || g_b5Busy)
+        return;
+    gen = ++g_b5EvGen;
+    for (int i = 0; i < (int)(sizeof(at) / sizeof(at[0])); i++)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, at[i] * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            if (gen != g_b5EvGen || !g_b5Running || g_b5Busy)
+                return;
+            b5Tick();
+        });
+}
+
+static const char *evName(uint32_t c)
+{
+    switch (c) {
+    case 1: return "POWER_CHANGED";
+    case 2: return "SSID_CHANGED";
+    case 3: return "BSSID_CHANGED";
+    case 4: return "LINK_CHANGED";
+    case 9: return "ASSOC_DONE";
+    case 10: return "SCAN_DONE";
+    case 20: return "RSN_HANDSHAKE_DONE";
+    case 30: return "ROAMED";
+    case 32: return "DEAUTH_RECEIVED";
+    case 54: return "CHANNEL_SWITCH";
+    case 58: return "INTERFACE_STATE";
+    case 70: return "ROAM_START";
+    case 71: return "ROAM_END";
+    case 140: return "BSS_STEERING_REQUEST";
+    default: return NULL;
+    }
+}
+
+static void b5EventsStart(void)
+{
+    struct wt_kev_request f = {1, 6, 1};
+    int s;
+
+    if (g_evSrc)
+        return;
+    s = socket(32 /* PF_SYSTEM */, SOCK_RAW, 1 /* SYSPROTO_EVENT */);
+    if (s < 0 || ioctl(s, 0x800C6502UL /* SIOCSKEVFILT */, &f) < 0) {
+        NSLog(@"wifitetherd: events: can't listen to the Wi-Fi driver (%s)", strerror(errno));
+        if (s >= 0)
+            close(s);
+        return;
+    }
+    g_evSrc = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t)s, 0, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(g_evSrc, ^{
+        unsigned char buf[4096];
+        ssize_t n = read(s, buf, sizeof(buf));
+        for (ssize_t off = 0; n > 0 && off + (ssize_t)sizeof(struct wt_kern_event_msg) <= n; ) {
+            struct wt_kern_event_msg *m = (struct wt_kern_event_msg *)(buf + off);
+            if (m->total_size < sizeof(*m) || off + (ssize_t)m->total_size > n)
+                break;
+            const char *name = evName(m->event_code);
+            if (name && m->event_code != 10 && m->event_code != 58) {
+                size_t dl = m->total_size - sizeof(*m);
+                NSLog(@"wifitetherd: events: %s (%u)%s%@", name, m->event_code,
+                      dl ? " data " : "", dl ? hexOf(m->data, dl > 48 ? 48 : dl) : @"");
+                if (m->event_code == 32 && !g_b5Busy) {
+                    g_b5Kicks++;
+                    g_b5LastKick = time(NULL);
+                    NSLog(@"wifitetherd: band: the router disconnected the iPhone; checking the band now");
+                }
+            }
+            switch (m->event_code) {
+            case 2: case 3: case 4: case 30: case 32: case 140:
+                b5EventCheck();
+                break;
+            }
+            off += m->total_size;
+        }
+    });
+    dispatch_source_set_cancel_handler(g_evSrc, ^{ close(s); });
+    dispatch_resume(g_evSrc);
+    NSLog(@"wifitetherd: events: listening to the Wi-Fi driver");
+}
+
+static void b5EventsStop(void)
+{
+    if (!g_evSrc)
+        return;
+    dispatch_source_cancel(g_evSrc);
+    g_evSrc = nil;
+}
+
+static int b5ReadFlag(const char *path)
 {
     char c = '0';
-    int want = 0;
-    FILE *f = fopen(WT_PREFER5, "r");
+    int on = 0;
+    FILE *f = fopen(path, "r");
 
     if (f) {
-        want = fread(&c, 1, 1, f) == 1 && c == '1';
+        on = fread(&c, 1, 1, f) == 1 && c == '1';
         fclose(f);
     }
+    return on;
+}
+
+static void b5Stop(void)
+{
+    dispatch_suspend(g_b5Timer);
+    b5EndMove();   /* a move in flight finds nothing to finish */
+    g_b5State = @"off";
+    g_b5Rssi = 0;
+    b5EventsStop();
+    g_b5NextScan5 = 0;
+    b5GuardEnd();
+}
+
+static void b5Start(void)
+{
+    b5EventsStart();
+    g_b5NextTry = 0;
+    g_b5NextScan5 = 0;
+    g_b5HandReady = -1;
+    g_b5HandWorked = 0;
+    g_b5HandFails = 0;
+    g_b5HandOffUntil = 0;
+    g_b5Kicks = g_b5MoveCount = 0;
+    g_b5LastKick = 0;
+    g_b5LastBeat = time(NULL);
+    g_b5LearnFails = 0;
+    g_b5ScanLearn = 0;
+    g_b5LandedAt = 0;
+    g_b5QuickBacks = 0;
+    g_b5FailStreak = 0;
+    g_b5Avoid = nil;
+    b5DropTarget();   /* the radio of the other band, or of an older visit */
+    b5HandoverListen();
+    b5HandoverReady();
+    g_b5State = @"searching";
+    dispatch_resume(g_b5Timer);
+    dispatch_async(dispatch_get_main_queue(), ^{ b5Tick(); });
+}
+
+/* Starts or stops the 5-second check to match the app's two switches
+ * (Force 5 GHz, Force 2.4 GHz; the app lets only one be on). */
+static void b5Update(void)
+{
+    int want5 = b5ReadFlag(WT_PREFER5), want24 = !want5 && b5ReadFlag(WT_PREFER24);
+    int want = want5 || want24, band = want24 ? 2 : 5;
+
     if (!g_b5Timer) {
         g_b5Timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(g_b5Timer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
@@ -1705,25 +1928,19 @@ static void b5Update(void)
         g_b5State = @"crashed";
         return;
     }
-    if (want == g_b5Running)
+    if (want == g_b5Running && (!want || band == g_b5Want))
         return;
-    g_b5Running = want;
-    NSLog(@"wifitetherd: force 5 GHz: %s", want ? "on" : "off");
-    if (want) {
-        g_b5NextTry = 0;
-        g_b5Lock = -1;   /* find out again whether blocking works */
-        memset(g_b5Moves, 0, sizeof(g_b5Moves));
-        g_b5State = @"searching";
-        dispatch_resume(g_b5Timer);
-        dispatch_async(dispatch_get_main_queue(), ^{ b5Tick(); });
-    } else {
-        dispatch_suspend(g_b5Timer);
-        g_b5State = @"off";
-        g_b5Rssi = 0;
-        b5Unblock("switched off");
-        g_b5NextScan5 = 0;
-        b5GuardEnd();
+    if (g_b5Running) {
+        g_b5Running = 0;
+        NSLog(@"wifitetherd: force %s: off", b5WantName());
+        b5Stop();
     }
+    if (!want)
+        return;
+    g_b5Want = band;
+    g_b5Running = 1;
+    NSLog(@"wifitetherd: force %s: on", b5WantName());
+    b5Start();
 }
 
 static void writeStatus(NSDictionary *d)
@@ -1770,7 +1987,7 @@ static void reconcile(void)
         int en = isEnabled() && share;   /* without Share: act as switched off */
         WTIf up = findIf(0), lan = findIf(1);
 
-        trimLog(WT_DIR "/daemon.log");
+        rotateOwnLog();
         trimLog(WT_DIR "/vpn.log");
 
         int air = airplaneMode();
@@ -1954,8 +2171,9 @@ static void reconcile(void)
         st[@"state"] = state;
         st[@"detail"] = detail;
         st[@"band5"] = g_b5State;
-        if (g_b5Running && g_b5Lock >= 0)
-            st[@"band5lock"] = @(g_b5Lock && g_b5Blocked != nil);
+        st[@"band5want"] = @(g_b5Want);
+        if (g_b5Running && g_b5HandReady >= 0)
+            st[@"band5hand"] = @(g_b5HandReady == 1);
         if (g_b5Rssi)
             st[@"band5rssi"] = @(g_b5Rssi);
         st[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
@@ -1984,7 +2202,6 @@ static dispatch_source_t watchSignal(int sig)
         dhcpRestore();
         writeStatus(@{ @"state": @"stopped", @"detail": @"",
                        @"updated": @0, @"enabled": @(isEnabled()) });
-        b5Unblock("WiFi Tether stopping");
         b5GuardEnd();   /* a deliberate stop, not a crash */
         exit(0);
     });
@@ -2061,8 +2278,8 @@ int main(int argc, char **argv)
                 fclose(f);
                 unlink(WT_B5_GUARD);
                 g_b5Crashed = 1;
-                NSLog(@"wifitetherd: the last 5 GHz call (%s) crashed; Keep Wi-Fi on 5 GHz is off "
-                      "until its switch is turned off and on", what);
+                NSLog(@"wifitetherd: the last Wi-Fi band call (%s) crashed; the band switch stays off "
+                      "until it's turned off and on", what);
             }
         }
         g_sigterm = watchSignal(SIGTERM);

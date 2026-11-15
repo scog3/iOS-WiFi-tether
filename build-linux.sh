@@ -62,6 +62,11 @@ cp "$XNU/bsd/sys/event.h" "$B/include/vpn/sys/event.h"
     -DPRIVATE -D__APPLE_API_PRIVATE -Wno-everything "${LDFLAGS[@]}" \
     src/vpn/pftun.c -o "$B/wifitether-vpn"
 
+echo "== Building hand-over add-on for iOS's Wi-Fi service (src/roam)"
+"$CLANG" "${CFLAGS[@]}" "${LDFLAGS[@]}" -fobjc-arc -dynamiclib \
+    -install_name /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherRoam.dylib \
+    src/roam/roam.m -framework Foundation -framework CoreFoundation -o "$B/WiFiTetherRoam.dylib"
+
 echo "== Building app"
 "$CLANG" "${CFLAGS[@]}" -fobjc-arc -c src/app/main.m -o "$B/app_main.o"
 "$CLANG" "${CFLAGS[@]}" "${LDFLAGS[@]}" "$B/app_main.o" \
@@ -81,6 +86,9 @@ cp packaging/com.wifitether.daemon.plist "$S/var/jb/Library/LaunchDaemons/"
 cp "$B/wifitether-vpn" "$S/var/jb/usr/libexec/wifitether-vpn"
 cp src/vpn/pftun-vpnid "$S/var/jb/usr/libexec/wifitether-vpnid"
 cp packaging/com.wifitether.vpn.plist "$S/var/jb/Library/LaunchDaemons/"
+TW="$S/var/jb/Library/MobileSubstrate/DynamicLibraries"
+mkdir -p "$TW"
+cp "$B/WiFiTetherRoam.dylib" src/roam/WiFiTetherRoam.plist "$TW/"
 mkdir -p "$S/var/jb/usr/share/doc/com.wifitether"
 cp src/vpn/LICENSE "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.pftun"
 cp src/daemon/LICENSE.AutoHotspot "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.AutoHotspot"
@@ -88,14 +96,16 @@ cp src/daemon/LICENSE.AutoHotspot "$S/var/jb/usr/share/doc/com.wifitether/LICENS
 ldid -Ssrc/app/entitlements.plist "$APP/WiFiTether"
 ldid -Ssrc/daemon/entitlements.plist "$S/var/jb/usr/libexec/wifitetherd"
 ldid -Ssrc/daemon/entitlements.plist "$S/var/jb/usr/libexec/wifitether-vpn"
+ldid -S "$TW/WiFiTetherRoam.dylib"
 
 sed "s/@VERSION@/$PKGVERSION/g" packaging/control > "$S/DEBIAN/control"
 cp packaging/postinst packaging/prerm "$S/DEBIAN/"
 
 chmod 755 "$S/DEBIAN/postinst" "$S/DEBIAN/prerm" "$APP/WiFiTether" "$S/var/jb/usr/libexec/wifitetherd" \
-    "$S/var/jb/usr/libexec/wifitether-vpn" "$S/var/jb/usr/libexec/wifitether-vpnid"
+    "$S/var/jb/usr/libexec/wifitether-vpn" "$S/var/jb/usr/libexec/wifitether-vpnid" "$TW/WiFiTetherRoam.dylib"
 chmod 644 "$S/var/jb/Library/LaunchDaemons/"*.plist "$APP/Info.plist" "$S/DEBIAN/control" \
-    "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.pftun" "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.AutoHotspot"
+    "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.pftun" "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.AutoHotspot" \
+    "$TW/WiFiTetherRoam.plist"
 
 OUT="$B/com.wifitether_${PKGVERSION}_iphoneos-arm64.deb"
 dpkg-deb --root-owner-group -Zgzip -b "$S" "$OUT"

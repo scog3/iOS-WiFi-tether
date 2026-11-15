@@ -32,4 +32,11 @@ for n in com.wifitether.daemon com.wifitether.vpn; do
     launchctl load -w "$LD/$n.plist" || true
 done
 
+# The band switches' hand-over add-on loads when iOS's Wi-Fi service starts, so
+# restart the service (Wi-Fi drops for a few seconds while it restarts).
+if [ -f /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherRoam.dylib ]; then
+    echo "Restarting iOS's Wi-Fi service so the band switches' hand-over add-on loads (Wi-Fi drops for a few seconds)."
+    killall -9 wifid >/dev/null 2>&1 || true
+fi
+
 exit 0

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0
+
+- **New name: WiFi Tether & Band Switcher.**
+- **Force 2.4 GHz** joins Force 5 GHz in a new **Wi-Fi band** section. Turning one on
+  turns the other off.
+- **Moving back is now near-instant.** The real cause turned out to be the router: routers
+  with one network name on both bands move the iPhone between bands by themselves (band
+  steering). WiFi Tether now notices the moment that happens and moves the iPhone straight
+  back. On iPhone X and older it uses iOS's own hand-over, through a small add-on in iOS's
+  Wi-Fi service, so Wi-Fi doesn't drop; on newer iPhones it disconnects and rejoins, which
+  drops Wi-Fi for about half a second.
+- Installing restarts iOS's Wi-Fi service so the add-on loads; Wi-Fi drops for a few
+  seconds.
+- Shorter texts in the app's Wi-Fi band section and a shorter 5 GHz warning.
+- Removed the 2.4 GHz blocking from 0.4.13 and other experiments that didn't do anything
+  on the iPhones tested.
+- `daemon.log` stays under 1 MB, with the part before that kept in `daemon.log.old`, and
+  gets a status line every 5 minutes while a band switch is on.
+- Fixed: after a long time on 5 GHz, a scan that came back empty could make it give up
+  for 5 minutes.
+- What was tried along the way is written up in `docs/band-switching-research.md`.
+
 ## 0.4.17
 
 - **Force 5 GHz** moves the iPhone back to 5 GHz within a few seconds whenever iOS

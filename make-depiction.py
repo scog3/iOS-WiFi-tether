@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes WiFi Tether's package page, with its details and the changelog from
+"""Writes WiFi Tether & Band Switcher's package page, with its details and the changelog from
 CHANGELOG.md, in two forms:
   depiction.json - Sileo's own format (Details and Changelog tabs)
   depiction.html - a web page, for package managers that don't read Sileo's format
@@ -24,10 +24,10 @@ screenshots = [("screenshots/sharing-vpn.png", "Sharing the iPhone's VPN over US
                ("screenshots/sharing-wifi.png", "Sharing the iPhone's Wi-Fi over USB")]
 
 details = (
-    "**USB tethering, plus Force 5 GHz Wi-Fi.** Plug your iPhone into a computer and the "
+    "**USB tethering, plus a Wi-Fi band switcher.** Plug your iPhone into a computer and the "
     "computer is online through the iPhone's **Wi-Fi**, or through its **VPN**. No SIM, no data "
-    "plan, nothing to set up on the computer. And a switch that keeps the iPhone's Wi-Fi on fast "
-    "**5 GHz**, which iOS has no setting for.\n\n"
+    "plan, nothing to set up on the computer. And switches that keep the iPhone's Wi-Fi on "
+    "**5 GHz** or **2.4 GHz**.\n\n"
     "- **Plug and play.** Leave the switch on and just plug in. If Windows misses the "
     "connection, WiFi Tether retries by itself.\n"
     "- **Shares your VPN.** VPN apps or the built-in VPN: the computer goes through it too, DNS included.\n"
@@ -35,12 +35,13 @@ details = (
     "- **Full speed.** No cap: about what the iPhone itself gets, up to what the USB port "
     "carries. Through a VPN, as fast as the VPN runs on the phone.\n"
     "- **One switch.** Turns Personal Hotspot on, keeps Wi-Fi connected, handles airplane mode.\n"
-    "- **Force 5 GHz.** Keeps the iPhone on your router's faster 5 GHz radio instead of slow "
-    "2.4 GHz, even where iOS would switch back. Works on its own, without tethering or Share.\n"
+    "- **Force 5 GHz or 2.4 GHz.** Keeps the iPhone on the band you pick, even when the router "
+    "moves it. Works on its own, without tethering or Share. Moving back is near-instant on "
+    "iPhone X and older; newer iPhones drop Wi-Fi for about half a second each time.\n"
     "- **No battery drain when it's off.**\n"
     "- **Free and open source** (MIT).\n\n"
     "USB tethering needs the **Share** tweak (the app has a button that adds its repo in Sileo); "
-    "Force 5 GHz works without it. "
+    "the band switches work without it. "
     "Rootless jailbreaks, iOS 15 and later.\n\n"
     "[Source code on GitHub](https://github.com/scog3/iOS-WiFi-tether)"
 )
@@ -90,7 +91,7 @@ def to_html(src):
 
 page = f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WiFi Tether</title>
+<title>WiFi Tether &amp; Band Switcher</title>
 <style>
 :root{{color-scheme:light dark;--bg:#fff;--fg:#111;--muted:#666;--line:#ddd;--code:#f0f0f0}}
 @media (prefers-color-scheme:dark){{:root{{--bg:#000;--fg:#eee;--muted:#999;--line:#333;--code:#1c1c1e}}}}
