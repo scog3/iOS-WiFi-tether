@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.16
+
+- **Force 5 GHz:** no more crash, but on this iPhone iOS kept an empty block list, so
+  blocking 2.4 GHz didn't stick. Now every move to 5 GHz also tells iOS which
+  2.4 GHz radios to avoid *for that join*, the same way iOS does for its own joins,
+  so it can't pick 2.4 GHz again. The log says whether the iPhone's Wi-Fi chip
+  supports the lasting block as well.
+
 ## 0.4.15
 
 - **Force 5 GHz:** fixes the background service crashing when blocking 2.4 GHz. iOS

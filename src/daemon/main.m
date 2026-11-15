@@ -950,6 +950,7 @@ static int         g_b5Rescued;              /* already turned Wi-Fi off and on 
 static CFStringRef g_b5SSID;                 /* the network the iPhone is on */
 static void       *g_b5Joining;              /* the radio being moved to (retained for the move) */
 static NSArray    *g_b5Blocked;              /* records of the 2.4 GHz radios we blocked */
+static NSArray    *g_b5Avoid;                /* this network's 2.4 GHz BSSIDs, 6-byte NSData each */
 static NSString   *g_b5BlockedSSID;
 static time_t      g_b5BlockedAt, g_b5LastWifi, g_b5NextScan5;
 static int         g_b5Lock = -1;            /* blocking 2.4 GHz: -1 not tried, 0 unavailable, 1 works */
@@ -1051,6 +1052,23 @@ static NSString *b5Str(NSDictionary *rec, NSString *key)
 {
     id v = rec[key];
     return [v isKindOfClass:NSString.class] ? v : nil;
+}
+
+/* "aa:bb:cc:dd:ee:ff" (iOS sometimes drops leading zeros: "a:b:c:...") -> 6 bytes. */
+static NSData *b5BSSIDBytes(NSString *s)
+{
+    NSArray *parts = [s componentsSeparatedByString:@":"];
+    unsigned char b[6];
+    if (parts.count != 6)
+        return nil;
+    for (int i = 0; i < 6; i++) {
+        unsigned v = 0;
+        NSScanner *sc = [NSScanner scannerWithString:parts[i]];
+        if (![sc scanHexInt:&v] || v > 0xff)
+            return nil;
+        b[i] = (unsigned char)v;
+    }
+    return [NSData dataWithBytes:b length:6];
 }
 
 /* A scan record as a plain property list: the request travels to wifid as
@@ -1359,15 +1377,14 @@ static void b5Join(void *net, int rssi)
         CFRelease(g_b5Joining);
     g_b5Joining = (void *)CFRetain(net);
     g_b5JoinTries = 0;
-    /* Same list wifid adds to its own joins: avoid these radios for this join. */
-    if (g_b5Blocked && B5.setProp) {
-        NSMutableArray *bssids = [NSMutableArray array];
-        for (NSDictionary *rec in g_b5Blocked)
-            if (b5Str(rec, @"BSSID") && bssids.count < 3)
-                [bssids addObject:b5Str(rec, @"BSSID")];
-        if (bssids.count)
-            B5.setProp(g_b5Joining, CFSTR("BSS_BLACKLIST"),
-                       (__bridge CFTypeRef)@{ @"BSS_BLACKLIST_BSSIDS": bssids });
+    /* Tell this join which radios to avoid: wifid hands a network's
+     * BSS_BLACKLIST { BSS_BLACKLIST_BSSIDS: up to 3 six-byte BSSIDs } to the
+     * Wi-Fi driver with the association (wifid _performAssociation), the same
+     * way it does for its own joins. With 2.4 GHz excluded, iOS can't pick it. */
+    if (g_b5Avoid.count && B5.setProp) {
+        NSArray *avoid = g_b5Avoid.count > 3 ? [g_b5Avoid subarrayWithRange:NSMakeRange(0, 3)] : g_b5Avoid;
+        B5.setProp(g_b5Joining, CFSTR("BSS_BLACKLIST"), (__bridge CFTypeRef)@{ @"BSS_BLACKLIST_BSSIDS": avoid });
+        NSLog(@"wifitetherd: 5 GHz: this join avoids %lu 2.4 GHz radio(s)", (unsigned long)avoid.count);
     }
     b5JoinNow();
 }
@@ -1388,6 +1405,7 @@ static void b5ScannedBody(CFArrayRef results, void *err)
     void *best = NULL;
     int bestRssi = -200, n24 = 0, n5 = 0, band;
     NSMutableArray *radios24 = [NSMutableArray array];
+    NSMutableArray *avoid = [NSMutableArray array];
 
     g_b5Busy = 0;
     if (!g_b5Running)
@@ -1410,8 +1428,12 @@ static void b5ScannedBody(CFArrayRef results, void *err)
             n24++;
             if (B5.copyRecord) {
                 NSDictionary *rec = CFBridgingRelease(B5.copyRecord(net));
-                if ([rec isKindOfClass:NSDictionary.class] && b5Str(rec, @"BSSID"))
+                if ([rec isKindOfClass:NSDictionary.class] && b5Str(rec, @"BSSID")) {
+                    NSData *bytes = b5BSSIDBytes(b5Str(rec, @"BSSID"));
                     [radios24 addObject:b5PlistOnly(rec)];
+                    if (bytes)
+                        [avoid addObject:bytes];
+                }
             }
         }
         if (band < 5)
@@ -1441,6 +1463,7 @@ static void b5ScannedBody(CFArrayRef results, void *err)
         g_b5NextTry = now + 120;
         return;
     }
+    g_b5Avoid = avoid;
     /* Block this network's 2.4 GHz radios, so iOS itself joins and stays on 5 GHz. */
     if (g_b5Lock != 0 && radios24.count)
         b5Block(radios24, (__bridge NSString *)g_b5SSID);
@@ -1463,12 +1486,43 @@ static void b5ScannedBody(CFArrayRef results, void *err)
 
 static void b5TickBody(void);
 
+/* wifid only keeps a lasting block when the Wi-Fi chip lists capability 84
+ * in deviceCapabilities (wifid sub "BssBlacklist not supported on this platform").
+ * Logged once, so a log shows which case an iPhone is. */
+static void b5LogCapability(void)
+{
+    static int done;
+    CFTypeRef (*copyProp)(void *, CFStringRef);
+    CFTypeRef caps;
+    int n = 84, has = -1;
+
+    if (done++ || !B5.dev)
+        return;
+    copyProp = dlsym(RTLD_DEFAULT, "WiFiDeviceClientCopyProperty");
+    if (!copyProp)
+        return;
+    b5GuardBegin("capabilities");
+    caps = copyProp(B5.dev, CFSTR("deviceCapabilities"));
+    if (b5IsHeapObject(caps) && CFGetTypeID(caps) == CFArrayGetTypeID()) {
+        CFNumberRef want = CFNumberCreate(NULL, kCFNumberIntType, &n);
+        has = CFArrayContainsValue(caps, CFRangeMake(0, CFArrayGetCount(caps)), want) ? 1 : 0;
+        CFRelease(want);
+    }
+    if (b5IsHeapObject(caps))
+        CFRelease(caps);
+    b5GuardEnd();
+    NSLog(@"wifitetherd: 5 GHz: Wi-Fi chip supports a lasting radio block: %s",
+          has < 0 ? "couldn't tell" : has ? "yes" : "no");
+}
+
 static void b5Tick(void)
 {
     if (!g_b5Running || g_b5Crashed)
         return;
     b5GuardBegin("check");
     b5TickBody();
+    if (!g_b5Busy)
+        b5LogCapability();
     if (!g_b5Busy)   /* a scan or join in progress keeps the mark until it answers */
         b5GuardEnd();
 }
