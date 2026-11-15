@@ -67,11 +67,11 @@ jobs:
               gh release delete-asset "$TAG" "$a" --yes
             done
             gh release upload "$TAG" build/*.deb --clobber
-            gh release edit "$TAG" --notes-file notes.md --latest
+            gh release edit "$TAG" --title "Tether & Band $VERSION" --notes-file notes.md --latest
           else
             gh release create "$TAG" build/*.deb \
               --target "$GITHUB_SHA" \
-              --title "WiFi Tether $VERSION" \
+              --title "Tether & Band $VERSION" \
               --notes-file notes.md \
               --latest
           fi
