@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.11
+
+- **Force 5 GHz Wi-Fi** (was *Keep Wi-Fi on 5 GHz*) now keeps the iPhone on 5 GHz
+  however weak the signal, unless it's too weak to connect to at all (below −85 dBm).
+  Turning it on asks first, because a weak 5 GHz signal can make Wi-Fi slower or
+  unstable.
+- Checks every 5 seconds instead of 10, so when iOS switches back to 2.4 GHz it's moved
+  back to 5 GHz sooner. The safety limit is now 10 moves in 10 minutes.
+
 ## 0.4.10
 
 - **Keep Wi-Fi on 5 GHz** actually moves the iPhone now: iOS ignores a request to

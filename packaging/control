@@ -11,4 +11,4 @@ Homepage: https://github.com/scog3/iOS-WiFi-tether
 Icon: https://scog3.github.io/iOS-WiFi-tether/icon.png
 SileoDepiction: https://scog3.github.io/iOS-WiFi-tether/depiction.json
 Depiction: https://scog3.github.io/iOS-WiFi-tether/depiction.html
-Description: Plug-and-play USB tethering: share your iPhone's Wi-Fi, or its VPN, with a computer. No SIM or data plan, nothing to set up on the computer, no speed cap. Change VPN location while plugged in and the computer follows within a second or two. Can also keep the iPhone's Wi-Fi on 5 GHz instead of slow 2.4 GHz. Needs the Share tweak; the app has a button that adds its repo in Sileo.
+Description: Plug-and-play USB tethering: share your iPhone's Wi-Fi, or its VPN, with a computer. No SIM or data plan, nothing to set up on the computer, no speed cap. Change VPN location while plugged in and the computer follows within a second or two. Can also force the iPhone's Wi-Fi onto 5 GHz instead of slow 2.4 GHz. Needs the Share tweak; the app has a button that adds its repo in Sileo.

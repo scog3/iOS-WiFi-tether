@@ -73,8 +73,9 @@ static NSString *wifiBand(void)
     UILabel  *_dns;
     UILabel  *_vpn;
     UIView   *_shareCard;   /* shown while the Share tweak isn't installed */
-    UISwitch *_band5Toggle; /* keep Wi-Fi on 5 GHz */
+    UISwitch *_band5Toggle; /* force 5 GHz */
     UILabel  *_band5Info;
+    BOOL      _band5Asking; /* the warning is showing */
     NSTimer  *_timer;
     unsigned  _ticks;
 }
@@ -153,9 +154,9 @@ static NSString *wifiBand(void)
     _dns = [self labelWithSize:15 weight:UIFontWeightMedium color:UIColor.labelColor];
     _vpn = [self labelWithSize:15 weight:UIFontWeightMedium color:UIColor.labelColor];
 
-    /* Keep Wi-Fi on 5 GHz: separate from sharing, works with it off */
+    /* Force 5 GHz: separate from sharing, works with it off */
     UILabel *band5Label = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
-    band5Label.text = @"Keep Wi-Fi on 5 GHz";
+    band5Label.text = @"Force 5 GHz Wi-Fi";
     _band5Toggle = [UISwitch new];
     [_band5Toggle addTarget:self action:@selector(band5Toggled:) forControlEvents:UIControlEventValueChanged];
     UIStackView *band5Row = [[UIStackView alloc] initWithArrangedSubviews:@[band5Label, _band5Toggle]];
@@ -281,15 +282,19 @@ static NSString *wifiBand(void)
 /* What the 5 GHz switch is doing, under it. */
 - (void)refreshBand5:(NSDictionary *)st fresh:(BOOL)fresh
 {
-    if (!_band5Toggle.isTracking)
+    if (!_band5Toggle.isTracking && !_band5Asking)
         _band5Toggle.on = [self prefer5Setting];
     NSString *s = fresh ? st[@"band5"] : nil;
     int rssi = [st[@"band5rssi"] intValue];
     NSString *dbm = rssi ? [NSString stringWithFormat:@" (\u2212%d dBm)", -rssi] : @"";
     NSString *text;
-    if (!_band5Toggle.on || [s isEqualToString:@"off"])
-        text = @"Moves this iPhone from your Wi-Fi's slow 2.4 GHz band to its faster 5 GHz band, and keeps it "
-               @"there. iOS has no setting for this. Works with sharing off too.";
+    if (!_band5Toggle.on || _band5Asking || [s isEqualToString:@"off"])
+        text = @"Keeps this iPhone on your Wi-Fi's faster 5 GHz band, even where iOS would switch to slow "
+               @"2.4 GHz. iOS has no setting for this. Works with sharing off too.\n"
+               @"Where the 5 GHz signal is weak, Wi-Fi can be slower or unstable.";
+    else if ([s isEqualToString:@"on5"] && rssi && rssi < -72)
+        text = [NSString stringWithFormat:@"On 5 GHz%@. The signal is weak here, so the connection may be "
+                                          @"slower or drop for a moment now and then.", dbm];
     else if ([s isEqualToString:@"on5"])
         text = [NSString stringWithFormat:@"On 5 GHz%@.", dbm];
     else if ([s isEqualToString:@"switching"])
@@ -299,9 +304,11 @@ static NSString *wifiBand(void)
     else if ([s isEqualToString:@"no5"])
         text = @"Your network's 5 GHz isn't in range here, so this iPhone stays on 2.4 GHz. Checked again every few minutes.";
     else if ([s isEqualToString:@"weak"])
-        text = [NSString stringWithFormat:@"Your network's 5 GHz is too weak here%@, so this iPhone stays on 2.4 GHz.", dbm];
+        text = [NSString stringWithFormat:@"Your network's 5 GHz is too weak to connect to here%@, so this iPhone "
+                                          @"stays on 2.4 GHz for now.", dbm];
     else if ([s isEqualToString:@"flapping"])
-        text = @"iOS keeps going back to 2.4 GHz, probably because 5 GHz is weak here. Trying again in a few minutes.";
+        text = @"iOS keeps switching back to 2.4 GHz, so this is paused for a few minutes to keep Wi-Fi usable. "
+               @"The 5 GHz signal is probably too weak here.";
     else if ([s isEqualToString:@"failed"])
         text = @"Couldn't move to 5 GHz. Trying again in a couple of minutes; details are in daemon.log.";
     else if ([s isEqualToString:@"nowifi"])
@@ -318,15 +325,42 @@ static NSString *wifiBand(void)
     _band5Info.text = text;
 }
 
-- (void)band5Toggled:(UISwitch *)sender
+- (void)setPrefer5:(BOOL)on
 {
     [[NSFileManager defaultManager] createDirectoryAtPath:WT_DIR withIntermediateDirectories:YES
                                                attributes:nil error:nil];
-    [(sender.on ? @"1" : @"0") writeToFile:WT_PREFER5 atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [(on ? @"1" : @"0") writeToFile:WT_PREFER5 atomically:YES encoding:NSUTF8StringEncoding error:nil];
     notify_post(WT_NOTIFY);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [self refresh];
     });
+}
+
+/* Turning it on warns first: a weak 5 GHz signal can make Wi-Fi worse. */
+- (void)band5Toggled:(UISwitch *)sender
+{
+    if (!sender.on) {
+        [self setPrefer5:NO];
+        return;
+    }
+    _band5Asking = YES;
+    UIAlertController *a = [UIAlertController
+        alertControllerWithTitle:@"Force 5 GHz?"
+                         message:@"5 GHz is faster, but it doesn't reach as far as 2.4 GHz. Where its signal is weak, "
+                                 @"Wi-Fi can be slower or unstable.\n\nWhen iOS switches back to 2.4 GHz, WiFi Tether "
+                                 @"moves it to 5 GHz again. Each move drops Wi-Fi for a second or two, and the "
+                                 @"computer's connection with it while sharing."
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) {
+        self->_band5Asking = NO;
+        [self->_band5Toggle setOn:NO animated:YES];
+        [self refresh];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Force 5 GHz" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        self->_band5Asking = NO;
+        [self setPrefer5:YES];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)showState:(NSString *)text color:(UIColor *)color

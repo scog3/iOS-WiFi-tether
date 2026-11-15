@@ -897,16 +897,18 @@ static NSString *usbWait(void)
  * An iPhone only looks for a better access point once its signal drops below
  * -70 dBm (Apple: "Wi-Fi roaming support in Apple devices"), so once it has
  * joined a router's 2.4 GHz radio it stays there, even right next to the
- * router. While the switch is on, every 10 seconds: if the iPhone is on
- * 2.4 GHz, scan; if the same network has a 5 GHz (or 6 GHz) radio with a
- * usable signal, join that radio (MobileWiFi). When iOS drifts back to
- * 2.4 GHz it's moved again, at most 3 times in 15 minutes, so a weak 5 GHz
- * signal can't make Wi-Fi flap. Nothing about the network or its saved
- * settings is changed.
+ * router. While the "Force 5 GHz" switch is on, every 5 seconds: if the
+ * iPhone is on 2.4 GHz, scan; if the same network has a 5 GHz (or 6 GHz)
+ * radio it can still connect to, join that radio (MobileWiFi), however weak:
+ * the user asked for 5 GHz and was warned it can be unstable. When iOS goes
+ * back to 2.4 GHz it's moved again. A safety limit of 10 moves in 10 minutes
+ * stops a runaway loop from keeping Wi-Fi down. Nothing about the network or
+ * its saved settings is changed.
  * ------------------------------------------------------------------------- */
 #define WT_PREFER5     WT_DIR "/prefer-5ghz"
-#define B5_MIN_RSSI    (-72)   /* weaker than this, iOS would roam straight back */
-#define B5_FLAP_WINDOW 900     /* seconds; at most 3 moves in this time */
+#define B5_MIN_RSSI    (-85)   /* weaker than this, it can't really connect */
+#define B5_FLAP_MOVES  10      /* at most this many moves ... */
+#define B5_FLAP_WINDOW 600     /* ... in this many seconds */
 
 typedef void (*B5ScanCb)(void *dev, CFArrayRef results, void *err, void *ctx);
 typedef void (*B5JoinCb)(void *dev, void *net, CFDictionaryRef info, void *err, void *ctx);
@@ -933,7 +935,7 @@ static NSString   *g_b5State = @"off";
 static int         g_b5Rssi;                 /* the 5 GHz radio's signal, for the app */
 static int         g_b5Busy;                 /* a scan or join is in progress */
 static time_t      g_b5BusySince, g_b5NextTry, g_b5LastJoin;
-static time_t      g_b5Moves[3];             /* the last 3 moves, oldest first */
+static time_t      g_b5Moves[B5_FLAP_MOVES]; /* the last moves, oldest first */
 static int         g_b5JoinTries;            /* joins in this move */
 static int         g_b5Rescued;              /* already turned Wi-Fi off and on after this move */
 static CFStringRef g_b5SSID;                 /* the network the iPhone is on */
@@ -1205,19 +1207,20 @@ static void b5ScannedBody(CFArrayRef results, void *err)
     NSLog(@"wifitetherd: 5 GHz: this network has %d radio(s) on 2.4 GHz and %d on 5 GHz in range; "
           @"the best 5 GHz one is at %d dBm", n24, n5, bestRssi);
     if (bestRssi < B5_MIN_RSSI) {
-        NSLog(@"wifitetherd: 5 GHz: the 5 GHz radio is too weak here (%d dBm)", bestRssi);
+        NSLog(@"wifitetherd: 5 GHz: the 5 GHz radio is too weak to connect to here (%d dBm)", bestRssi);
         g_b5State = @"weak";
         g_b5NextTry = now + 120;
         return;
     }
     if (g_b5Moves[0] && now - g_b5Moves[0] < B5_FLAP_WINDOW) {
-        NSLog(@"wifitetherd: 5 GHz: iOS keeps going back to 2.4 GHz; waiting before trying again");
+        NSLog(@"wifitetherd: 5 GHz: iOS went back to 2.4 GHz %d times in %d minutes; pausing",
+              B5_FLAP_MOVES, B5_FLAP_WINDOW / 60);
         g_b5State = @"flapping";
         g_b5NextTry = g_b5Moves[0] + B5_FLAP_WINDOW;
         return;
     }
-    memmove(g_b5Moves, g_b5Moves + 1, 2 * sizeof(time_t));
-    g_b5Moves[2] = now;
+    memmove(g_b5Moves, g_b5Moves + 1, (B5_FLAP_MOVES - 1) * sizeof(time_t));
+    g_b5Moves[B5_FLAP_MOVES - 1] = now;
     b5Join(best, bestRssi);
 }
 
@@ -1336,8 +1339,8 @@ static void b5Update(void)
     }
     if (!g_b5Timer) {
         g_b5Timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        dispatch_source_set_timer(g_b5Timer, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC),
-                                  10 * NSEC_PER_SEC, NSEC_PER_SEC);
+        dispatch_source_set_timer(g_b5Timer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
+                                  5 * NSEC_PER_SEC, NSEC_PER_SEC);
         dispatch_source_set_event_handler(g_b5Timer, ^{ b5Tick(); });
     }
     if (!want && g_b5Crashed) {
@@ -1351,7 +1354,7 @@ static void b5Update(void)
     if (want == g_b5Running)
         return;
     g_b5Running = want;
-    NSLog(@"wifitetherd: keep Wi-Fi on 5 GHz: %s", want ? "on" : "off");
+    NSLog(@"wifitetherd: force 5 GHz: %s", want ? "on" : "off");
     if (want) {
         g_b5NextTry = 0;
         memset(g_b5Moves, 0, sizeof(g_b5Moves));
