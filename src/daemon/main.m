@@ -951,6 +951,9 @@ static CFStringRef g_b5SSID;                 /* the network the iPhone is on */
 static void       *g_b5Joining;              /* the radio being moved to (retained for the move) */
 static NSArray    *g_b5Blocked;              /* records of the 2.4 GHz radios we blocked */
 static NSArray    *g_b5Avoid;                /* this network's 2.4 GHz BSSIDs, 6-byte NSData each */
+static void       *g_b5Target;               /* the 5 GHz radio from the last scan (retained) */
+static time_t      g_b5TargetAt, g_b5LandedAt;
+static int         g_b5QuickBacks;           /* times in a row iOS went back within 30 s */
 static NSString   *g_b5BlockedSSID;
 static time_t      g_b5BlockedAt, g_b5LastWifi, g_b5NextScan5;
 static int         g_b5Lock = -1;            /* blocking 2.4 GHz: -1 not tried, 0 unavailable, 1 works */
@@ -1253,6 +1256,7 @@ static void b5WatchLanding(int checks)
     }
     if (band >= 5) {
         NSLog(@"wifitetherd: 5 GHz: on 5 GHz (%d ms after disconnecting)", b5Ms());
+        g_b5LandedAt = time(NULL);
         g_b5State = @"on5";
         g_b5FailStreak = 0;
         b5EndMove();
@@ -1389,6 +1393,29 @@ static void b5Join(void *net, int rssi)
     b5JoinNow();
 }
 
+/* Moves to 5 GHz. iOS switching back after a while is expected where 5 GHz is
+ * weak (it roams below -70 dBm), and each move costs only about a second, so
+ * that's not limited; going back within 30 seconds 5 times in a row means it
+ * can't hold here, so it pauses for 5 minutes. */
+static void b5Move(void *net, int rssi)
+{
+    time_t now = time(NULL);
+
+    if (g_b5LandedAt && now - g_b5LandedAt < 30) {
+        if (++g_b5QuickBacks >= 5) {
+            NSLog(@"wifitetherd: 5 GHz: iOS keeps going straight back to 2.4 GHz; pausing for 5 minutes");
+            g_b5QuickBacks = 0;
+            g_b5LandedAt = 0;
+            g_b5State = @"flapping";
+            g_b5NextTry = now + 300;
+            return;
+        }
+    } else {
+        g_b5QuickBacks = 0;
+    }
+    b5Join(net, rssi);
+}
+
 static void b5ScannedBody(CFArrayRef results, void *err);
 
 static void b5Scanned(void *dev, CFArrayRef results, void *err, void *ctx)
@@ -1411,9 +1438,8 @@ static void b5ScannedBody(CFArrayRef results, void *err)
     if (!g_b5Running)
         return;
     if (!results || CFGetTypeID(results) != CFArrayGetTypeID()) {
-        NSLog(@"wifitetherd: 5 GHz: scan failed (error %p)", err);
-        g_b5State = @"failed";
-        g_b5NextTry = now + 120;
+        NSLog(@"wifitetherd: 5 GHz: scan failed (error %p); trying again in 15 seconds", err);
+        g_b5NextTry = now + 15;   /* usually busy: iOS is scanning or roaming itself */
         return;
     }
     for (CFIndex i = 0; i < CFArrayGetCount(results); i++) {
@@ -1472,16 +1498,13 @@ static void b5ScannedBody(CFArrayRef results, void *err)
         g_b5State = @"on5";
         return;
     }
-    if (g_b5Moves[0] && now - g_b5Moves[0] < B5_FLAP_WINDOW) {
-        NSLog(@"wifitetherd: 5 GHz: iOS went back to 2.4 GHz %d times in %d minutes; pausing",
-              B5_FLAP_MOVES, B5_FLAP_WINDOW / 60);
-        g_b5State = @"flapping";
-        g_b5NextTry = g_b5Moves[0] + B5_FLAP_WINDOW;
-        return;
-    }
-    memmove(g_b5Moves, g_b5Moves + 1, (B5_FLAP_MOVES - 1) * sizeof(time_t));
-    g_b5Moves[B5_FLAP_MOVES - 1] = now;
-    b5Join(best, bestRssi);
+    /* Remember this radio, so when iOS switches back later it's moved straight
+     * back without waiting for another scan. */
+    if (g_b5Target)
+        CFRelease(g_b5Target);
+    g_b5Target = (void *)CFRetain(best);
+    g_b5TargetAt = now;
+    b5Move(best, bestRssi);
 }
 
 static void b5TickBody(void);
@@ -1596,6 +1619,10 @@ static void b5TickBody(void)
             memset(g_b5Moves, 0, sizeof(g_b5Moves));   /* new network: fresh start */
             g_b5NextTry = 0;
             g_b5NextScan5 = 0;
+            if (g_b5Target)
+                CFRelease(g_b5Target);
+            g_b5Target = NULL;
+            g_b5LandedAt = 0;
             b5Unblock("joined another network");
         }
     }
@@ -1630,8 +1657,17 @@ static void b5TickBody(void)
         return;
     }
     /* On 2.4 GHz. */
+    if (g_b5LandedAt && [g_b5State isEqualToString:@"on5"]) {
+        NSLog(@"wifitetherd: 5 GHz: iOS switched back to 2.4 GHz after %ld s", (long)(now - g_b5LandedAt));
+        g_b5State = @"searching";
+    }
     if (g_b5Busy || now < g_b5NextTry || !g_b5SSID)
         return;
+    if (g_b5Target && now - g_b5TargetAt < 600 && g_b5Lock == 0) {
+        g_b5State = @"switching";
+        b5Move(g_b5Target, g_b5Rssi);
+        return;
+    }
     if (![g_b5State isEqualToString:@"weak"] && ![g_b5State isEqualToString:@"no5"] &&
         ![g_b5State isEqualToString:@"flapping"] && ![g_b5State isEqualToString:@"failed"])
         g_b5State = @"searching";

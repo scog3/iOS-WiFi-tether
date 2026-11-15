@@ -318,7 +318,8 @@ static NSString *wifiBand(void)
         id lock = st[@"band5lock"];
         NSString *how = !lock ? @""
             : [lock boolValue] ? @" 2.4 GHz is blocked, so iOS stays on 5 GHz."
-            : @" This iPhone can't block 2.4 GHz, so iOS may switch back now and then.";
+            : @" Where 5 GHz is weak, iOS switches back to 2.4 GHz now and then; WiFi Tether moves it "
+              @"straight back (Wi-Fi drops for about a second).";
         NSString *weak = rssi && rssi < -72 ? @" The signal is weak here, so the connection may be slower." : @"";
         text = [NSString stringWithFormat:@"On 5 GHz%@.%@%@", dbm, how, weak];
     }

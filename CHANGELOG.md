@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.17
+
+- **Force 5 GHz** moves the iPhone back to 5 GHz within a few seconds whenever iOS
+  switches to 2.4 GHz on its own, using the 5 GHz radio it already found instead of
+  scanning again. iOS does that where 5 GHz is weaker than −70 dBm; each move drops
+  Wi-Fi for about a second.
+- No longer stops after 10 moves: it only pauses (5 minutes) if iOS goes straight back
+  within 30 seconds 5 times in a row.
+- A scan that iOS turns down because it's busy is retried after 15 seconds instead of
+  2 minutes.
+
 ## 0.4.16
 
 - **Force 5 GHz:** no more crash, but on this iPhone iOS kept an empty block list, so
