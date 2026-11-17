@@ -781,37 +781,89 @@ static void askAirplane(NSString *message)
 /* ── Is a computer plugged in? ─────────────────────────────────────
  * IOKit's external power adapter details: a computer's USB port reports the
  * USB host family codes; chargers report others.
- * 1 computer, 0 nothing or a charger, 2 power of unknown kind. */
+ * 1 computer, 0 nothing or a charger, 2 power of unknown kind.
+ *
+ * First, whether anything is plugged in at all: the battery's
+ * ExternalConnected (IOPMPowerSource, what shows the phone charging). With no
+ * external power there's no computer, so nothing to wait for or retry. */
+static int externalPower(void)   /* 1 yes, 0 no, -1 can't tell */
+{
+    static CFMutableDictionaryRef (*matching)(const char *);
+    static uint32_t (*getService)(uint32_t, CFDictionaryRef);
+    static CFTypeRef (*getProp)(uint32_t, CFStringRef, CFAllocatorRef, uint32_t);
+    static uint32_t svc;
+    static int tried;
+    CFTypeRef v;
+    int r = -1;
+
+    if (!tried) {
+        tried = 1;
+        dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
+        matching = dlsym(RTLD_DEFAULT, "IOServiceMatching");
+        getService = dlsym(RTLD_DEFAULT, "IOServiceGetMatchingService");
+        getProp = dlsym(RTLD_DEFAULT, "IORegistryEntryCreateCFProperty");
+    }
+    if (!svc && matching && getService)
+        svc = getService(0 /* kIOMainPortDefault */, matching("IOPMPowerSource"));   /* consumes the dictionary */
+    if (!svc || !getProp)
+        return -1;
+    v = getProp(svc, CFSTR("ExternalConnected"), kCFAllocatorDefault, 0);
+    if (v) {
+        if (CFGetTypeID(v) == CFBooleanGetTypeID())
+            r = CFBooleanGetValue(v) ? 1 : 0;
+        CFRelease(v);
+    }
+    return r;
+}
+
 static int computerPlugged(void)
 {
     static CFDictionaryRef (*details)(void);
-    static int tried;
+    static int tried, lastExt = -2;
+    static long long lastFam = -2;
     CFDictionaryRef d;
-    uint32_t fam;
-    NSNumber *n;
+    uint32_t fam = 0;
+    NSNumber *n = nil;
+    int ext = externalPower(), haveD = 0, r;
 
     if (!tried) {
         tried = 1;
         dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
         details = dlsym(RTLD_DEFAULT, "IOPMCopyExternalPowerAdapterDetails");
     }
+    d = ext != 0 && details ? details() : NULL;
+    if (d) {
+        haveD = 1;
+        n = ((__bridge NSDictionary *)d)[@"FamilyCode"];
+        fam = (uint32_t)[n unsignedIntValue];
+        CFRelease(d);
+    }
+    /* What the phone reports, logged when it changes, to learn how a computer
+     * and a charger look on each device. */
+    if (ext != lastExt || (n ? (long long)fam : -1) != lastFam) {
+        NSLog(@"wifitetherd: power: %s%@", ext == 1 ? "plugged in" : ext == 0 ? "not plugged in" : "can't tell",
+              ext == 0 ? @"" : !details ? @"; adapter details unavailable"
+              : n ? [NSString stringWithFormat:@"; adapter family 0x%08x", fam] : @"; adapter unknown");
+        lastExt = ext;
+        lastFam = n ? (long long)fam : -1;
+    }
+    if (ext == 0)
+        return 0;
     if (!details)
         return 2;
-    d = details();
-    if (!d)
-        return 0;
-    n = ((__bridge NSDictionary *)d)[@"FamilyCode"];
-    fam = (uint32_t)[n unsignedIntValue];
-    CFRelease(d);
+    if (!haveD)
+        return ext == 1 ? 2 : 0;   /* power but no adapter details: could be a computer */
     if (!n)
         return 2;
     /* kIOPSFamilyCodeUSBHost, ...USBHostSuspended, ...USBChargingPortDownstream
      * (a computer port that charges faster) */
     if (fam == 0xE0004000u || fam == 0xE0004001u || fam == 0xE0004005u)
-        return 1;
-    if (fam == 0xE0004007u || fam == 0)
-        return 2;
-    return 0;
+        r = 1;
+    else if (fam == 0xE0004007u || fam == 0)
+        r = 2;
+    else
+        r = 0;
+    return r;
 }
 
 static time_t g_usbWaitStart, g_usbNextRetry, g_usbRestartUntil;
@@ -899,6 +951,7 @@ static NSString *controlHotspot(const WTIf *up, const WTIf *lan, int air)
  * "iPhone USB" on standby ("Attached"). Used for the waiting message and the
  * log. -1: no word since WiFi Tether started. */
 static int g_hostAttached = -1;
+static time_t g_hostAttachedAt;
 
 static void hostWatchStart(void)
 {
@@ -907,8 +960,10 @@ static void hostWatchStart(void)
     if (onTok >= 0)
         return;
     notify_register_dispatch("com.apple.mobile.lockdown.host_attached", &onTok, dispatch_get_main_queue(), ^(int t) {
-        if (g_hostAttached != 1)
+        if (g_hostAttached != 1) {
             NSLog(@"wifitetherd: a computer is connected to the %@ (its Apple device software)", deviceWord());
+            g_hostAttachedAt = time(NULL);
+        }
         g_hostAttached = 1;
     });
     notify_register_dispatch("com.apple.mobile.lockdown.host_detached", &offTok, dispatch_get_main_queue(), ^(int t) {
@@ -964,13 +1019,17 @@ static void logInterfaces(const char *when)
  * connects 3-8 seconds later, so: the first try at 6 seconds, then 12, 15 and
  * 20 seconds apart (closer would cut Windows off mid-setup). After 4 tries the
  * app shows a Reconnect button (WT_RECONNECT), which starts them again.
- * While the computer's Apple software is connected but the computer isn't
- * using the phone (a Mac that's online another way keeps it on standby, and
- * no restart changes that), the app says so instead of showing the tries.
- * Returns a short status detail. */
+ * While the computer's Apple software is connected, the tries are held: a
+ * Mac sees the phone straight away and decides by its own network order
+ * whether to use it (a Mac that's online another way keeps it on standby,
+ * and no restart changes that), while Windows' software only connects as it
+ * starts using the phone. The app says so instead of showing tries. After 2
+ * minutes connected but unused the tries go ahead anyway, in case it isn't a
+ * Mac. Returns a short status detail. */
 #define USB_TRIES    4
 #define WT_RECONNECT "com.wifitether.reconnect"
 static int g_usbDone;   /* the automatic tries are over */
+static int g_usbHeld;   /* tries held while the computer's Apple software is connected */
 
 static NSString *usbWait(void)
 {
@@ -978,7 +1037,7 @@ static NSString *usbWait(void)
     int pc = computerPlugged();
     static const int gaps[USB_TRIES] = { 12, 15, 20, 25 };   /* after tries 1-4 */
 
-    if (pc == 0) {
+    if (pc == 0 && g_hostAttached != 1) {   /* nothing plugged in (or a charger): nothing to retry */
         g_usbWaitStart = 0;
         g_usbDone = 0;
         return nil;
@@ -990,7 +1049,16 @@ static NSString *usbWait(void)
         g_usbDone = 0;
         g_usbNextRetry = now + 6;
     }
-    if (now >= g_usbNextRetry && !g_usbDone) {
+    if (g_hostAttached == 1 && now - g_hostAttachedAt < 120) {
+        if (!g_usbHeld)
+            NSLog(@"wifitetherd: the computer sees the %@; leaving it to decide when to use it (no hotspot restarts)",
+                  deviceWord());
+        g_usbHeld = 1;
+        g_usbNextRetry = now + 6;   /* if it disconnects, the next try comes 6 seconds later */
+    } else {
+        g_usbHeld = 0;
+    }
+    if (!g_usbHeld && now >= g_usbNextRetry && !g_usbDone) {
         if (g_usbTries >= USB_TRIES) {
             g_usbDone = 1;
             NSLog(@"wifitetherd: the computer still hasn't connected after %d tries", USB_TRIES);
@@ -1022,6 +1090,7 @@ static void usbReconnect(void)
     g_usbTries = 0;
     g_usbDone = 0;
     g_usbNextRetry = 0;
+    g_hostAttachedAt = 0;   /* a tap means try even if a computer's software is connected */
 }
 
 /* Why sharing stopped, for the log. "The USB network went away" while the
@@ -2622,13 +2691,14 @@ static void reconcile(void)
         if (lan.ok || !en) {
             g_usbWaitStart = 0;
             g_usbDone = 0;
+            g_usbHeld = 0;
         }
         if (control && [state isEqualToString:@"active"] && !detail.length)
             detail = control;
         st[@"state"] = state;
         st[@"detail"] = detail;
         st[@"host"] = @(g_hostAttached == 1);
-        st[@"usbDone"] = @(g_usbWaitStart && g_usbDone);   /* the app shows Reconnect */
+        st[@"usbDone"] = @(g_usbWaitStart && g_usbDone && g_hostAttached != 1);   /* the app shows Reconnect */
         st[@"band5"] = g_b5State;
         st[@"band5want"] = @(g_b5Want);
         st[@"band5band"] = @(g_b5Band);   /* 6 when Force 5 GHz has it on 6 GHz */

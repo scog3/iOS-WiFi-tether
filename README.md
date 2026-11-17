@@ -111,7 +111,7 @@ Personal Hotspot off; the background services then sleep and use no battery.
 | 🟢 Sharing Wi-Fi over USB | Working |
 | 🔵 Ready: plug in the USB cable | Personal Hotspot is on; plug in |
 | 🔵 Waiting for the computer | Plugged in, the computer is setting up the connection; the app retries up to 4 times |
-| 🟡 Connected to the computer | The computer sees the device but isn't using it for internet yet. On a Mac that's on Wi-Fi, see [What you need](#what-you-need) |
+| 🟡 Connected to the computer | The computer sees the device but isn't using it for internet yet, so the app leaves it to decide (no retries). On a Mac that's on Wi-Fi, see [What you need](#what-you-need) |
 | 🟠 Computer didn't connect | The retries are over: tap **Reconnect**, or unplug and plug back in |
 | 🟠 Starting Personal Hotspot | Turning the hotspot on; see the message underneath if it stays |
 | 🟠 Waiting for Wi-Fi | Connect to a Wi-Fi network |
@@ -271,8 +271,9 @@ root) fills that gap whenever sharing is on:
    visible over Wi-Fi (WiFiKit's discovery state), because that takes over the Wi-Fi chip
    and disconnects Wi-Fi. If Wi-Fi drops while the hotspot is on, it hides the hotspot and
    turns Wi-Fi back on (MobileWiFi `WiFiManagerClientSetPower`). Airplane mode is switched
-   with RadiosPreferences (AppSupport), as Control Center does. Whether a computer is
-   plugged in comes from IOKit's external power adapter details (USB host family codes);
+   with RadiosPreferences (AppSupport), as Control Center does. Whether anything is
+   plugged in comes from the battery's `ExternalConnected` (IOKit's `IOPMPowerSource`), and
+   whether it's a computer from the external power adapter details (USB host family codes);
    iOS's `com.apple.mobile.lockdown.host_attached` / `host_detached` notifications say when
    a computer's Apple device software is talking to it.
 5. **Fast reconnects.** Rules in the main filter ruleset record every new TCP connection

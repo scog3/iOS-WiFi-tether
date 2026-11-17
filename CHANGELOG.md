@@ -9,9 +9,14 @@
   all 4 are done in under a minute.
 - **Waiting for the computer** (blue) shows the retry count again: *Retrying (2 of 4)…*
 - **Connected to the computer** (yellow): the computer sees the phone but isn't using it
-  for internet yet, as with a Mac on Wi-Fi, with a one-line tip.
+  for internet yet, as with a Mac on Wi-Fi, with a one-line tip. The app doesn't restart
+  the hotspot then, since that never helps on a Mac: the Mac decides by its own network
+  order. (Windows only sees the phone as it starts using it.)
 - **Computer didn't connect** (orange), once the retries are over, with a **Reconnect**
   button that starts them again.
+- **No retrying with nothing plugged in.** The app now checks that the phone has external
+  power (what shows it charging) before waiting for a computer, so with the cable out it
+  just says *Ready: plug in the USB cable*.
 - Shorter messages under the status.
 
 ## 1.4

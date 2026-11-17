@@ -547,7 +547,7 @@ static NSString *untestedText(void)
     } else if ([state isEqualToString:@"waitcomputer"]) {
         /* "Connected": a computer's Apple device software is talking to the
          * phone, but the computer isn't using it for internet (yet). */
-        BOOL done = [st[@"usbDone"] boolValue];
+        BOOL done = [st[@"usbDone"] boolValue] && ![st[@"host"] boolValue];
         if ([st[@"host"] boolValue])
             [self showState:@"Connected to the computer" color:UIColor.systemYellowColor];
         else if (done)
