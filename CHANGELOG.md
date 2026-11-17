@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.4
+
+**Wi-Fi band switcher**
+
+- **Fixed: a band switch could hang** after the phone had been sitting for a while, until
+  Wi-Fi was turned off and on. When the first hand-over didn't move it, the app asked iOS
+  to scan too soon after the previous request; iOS rejected it without an answer, and the
+  app waited 30 seconds and then gave up for 2 minutes. Scans are now spaced out, and one
+  that isn't answered is retried after a few seconds.
+- **Faster first switch after the phone has sat on one band.** The app gives up on a
+  hand-over after about 1 second instead of 3, finds the radio, and then tries the
+  hand-over once more, so that first switch may not drop Wi-Fi at all. If not, it rejoins
+  as before.
+- **If iOS won't scan at all, the app turns Wi-Fi off and on by itself**, the same as
+  doing it in Settings (at most every 10 minutes), instead of waiting.
+- While the first switch is under way, the app says it can take a few seconds.
+- With Force 5 GHz on and the device on 6 GHz, the app says *On 6 GHz* (it used to say
+  5 GHz). Untested: no 6 GHz device to try it on.
+- The log's kick count no longer counts the app's own hand-overs as router kicks.
+
+**USB tethering**
+
+- **Mac:** while a Mac is plugged in but not using the phone (it's on Wi-Fi), the app
+  says **Connected to the computer** and explains how to put iPhone USB first in the
+  Mac's network settings, instead of looking like it's still trying to connect.
+- The waiting message no longer shows *try 2, try 3…*; the retries that help Windows
+  still happen in the background.
+- **The log says why sharing stopped**: switched off, Wi-Fi lost, Personal Hotspot off,
+  or the USB network to the computer went away (and whether the cable still reads as
+  plugged in). It also says when the hotspot gives the computer an address, and lists
+  the phone's network connections while it waits for the computer.
+- The *tap Trust* message says iPad on iPads.
+
 ## 1.3
 
 - **Faster first switch to a band the phone hasn't used lately.** The quick hand-over

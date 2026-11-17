@@ -52,9 +52,10 @@ code{background:#f0f0f0;padding:2px 5px;border-radius:4px}</style></head><body>
 <p>Once it's installed, it's called <b>Tether &amp; Band</b> on the home screen.</p>
 <h2>USB tethering</h2>
 <ol><li>Connect the iPhone or iPad to Wi-Fi.</li><li>Open Tether &amp; Band and turn on <b>Share Wi-Fi over USB</b>.</li><li>Plug it into the computer with a USB cable.</li></ol>
+<p>On a Mac that's also on Wi-Fi: <b>System Settings → Network → ⋯ → Set Service Order</b>, and drag <b>iPhone USB</b> above Wi-Fi (or turn the Mac's Wi-Fi off).</p>
 <p>Needs the <a href="https://github.com/amineross/share">Share</a> tweak: in Tether &amp; Band, tap <b>Add Share's Repo in Sileo</b>, then <b>Add Dist Repo</b> and <b>Add</b>, and install Share. (Or add <code>https://aminerostane.com/repo</code> in Sileo yourself; if <b>Add Source</b> doesn't add it, use <b>Add Dist Repo</b>.)</p>
 <h2>Wi-Fi band switcher</h2>
-<p>Open Tether &amp; Band and turn on <b>Force 5 GHz Wi-Fi</b> or <b>Force 2.4 GHz Wi-Fi</b>. Only one can be on. It doesn't need Share or tethering.</p>
+<p>Open Tether &amp; Band and turn on <b>Force 5 GHz Wi-Fi</b> or <b>Force 2.4 GHz Wi-Fi</b>. Only one can be on. It doesn't need Share or tethering. The first switch after a while can take a few seconds; after that it's near-instant.</p>
 <p><a href="https://github.com/scog3/iOS-WiFi-tether">Source code and releases on GitHub</a></p>
 <script>var u=location.href.replace(/index\.html$/,'');if(!u.endsWith('/'))u+='/';
 document.getElementById('url').textContent=u;document.getElementById('add').href='sileo://source/'+u;</script>

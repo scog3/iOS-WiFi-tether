@@ -348,13 +348,18 @@ static NSString *wifiBand(void)
         s = nil;   /* still about the other switch: the service hasn't caught up yet */
     int rssi = [st[@"band5rssi"] intValue];
     NSString *dbm = rssi ? [NSString stringWithFormat:@" (−%d dBm)", -rssi] : @"";
+    NSString *on = !on24 && [st[@"band5band"] intValue] == 6 ? @"6 GHz" : want;   /* Force 5 GHz counts 6 GHz */
     NSString *text;
     if ((!on5 && !on24) || [s isEqualToString:@"off"])
         text = @"Keeps Wi-Fi on one band. 5 GHz is faster; 2.4 GHz reaches further. Works with sharing off too.";
     else if ([s isEqualToString:@"on5"])
-        text = [NSString stringWithFormat:@"On %@%@.", want, dbm];
+        text = [NSString stringWithFormat:@"On %@%@.", on, dbm];
     else if ([s isEqualToString:@"switching"])
         text = [NSString stringWithFormat:@"Moving to %@…", want];
+    else if ([s isEqualToString:@"finding"])
+        text = [NSString stringWithFormat:@"Moving to %@… The first switch after a while can take a few seconds.", want];
+    else if ([s isEqualToString:@"restarting"])
+        text = [NSString stringWithFormat:@"Turning Wi-Fi off and on to find %@…", want];
     else if ([s isEqualToString:@"searching"])
         text = [NSString stringWithFormat:@"On %@. Looking for %@…", other, want];
     else if ([s isEqualToString:@"no5"])
@@ -367,7 +372,7 @@ static NSString *wifiBand(void)
     else if ([s isEqualToString:@"notsticking"])
         text = [NSString stringWithFormat:@"Couldn't stay on %@. Trying again in a few minutes.", want];
     else if ([s isEqualToString:@"failed"])
-        text = [NSString stringWithFormat:@"Couldn't move to %@. Trying again in a couple of minutes.", want];
+        text = [NSString stringWithFormat:@"Couldn't move to %@ yet. Trying again shortly.", want];
     else if ([s isEqualToString:@"nowifi"])
         text = @"Not connected to Wi-Fi.";
     else if ([s isEqualToString:@"crashed"])
@@ -527,7 +532,10 @@ static NSString *untestedText(void)
     } else if ([state isEqualToString:@"airplane"]) {
         [self showState:@"Airplane mode is on" color:UIColor.systemOrangeColor];
     } else if ([state isEqualToString:@"waitcomputer"]) {
-        [self showState:@"Waiting for the computer" color:UIColor.systemBlueColor];
+        /* "Connected": a computer's Apple device software is talking to the
+         * phone, but the computer isn't using it for internet (yet). */
+        [self showState:[st[@"host"] boolValue] ? @"Connected to the computer" : @"Ready: waiting for the computer"
+                  color:UIColor.systemBlueColor];
     } else if ([state isEqualToString:@"ready"]) {
         [self showState:@"Ready: plug in the USB cable" color:UIColor.systemBlueColor];
     } else if ([state isEqualToString:@"nohotspot"]) {

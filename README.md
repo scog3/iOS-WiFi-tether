@@ -48,13 +48,12 @@ like a captive portal you've already signed in to on the phone.
   moves it back at once, usually without Wi-Fi dropping at all.
 - **Doesn't need tethering or the Share tweak.**
 
-Both are **free and open source** (MIT), unlike paid tethering tweaks such as Tethera and
-TetherMe.
+Both are **free and open source** (MIT).
 
 > **Beta.** Should work on any iPhone or iPad with a rootless jailbreak on iOS 15 or later,
 > including Wi-Fi-only iPads. So far it's been tested on an iPhone 6s with iOS 15.8.5
-> (Dopamine) and a Windows PC; the band switcher's hand-over on iPhone XS and newer hasn't
-> been tested yet. Reports from other devices and routers are welcome; please open an issue.
+> (Dopamine), with a Windows PC and a Mac; the band switcher's hand-over on iPhone XS and
+> newer hasn't been tested yet. Reports from other devices and routers are welcome; please open an issue.
 
 ## What you need
 
@@ -66,7 +65,9 @@ TetherMe.
     app adds the internet connection on top. The app has a button that adds Share's repo.
   - A USB cable, and a computer that supports iPhone USB tethering. Windows needs Apple's
     iPhone drivers, which come with iTunes or Apple Devices; macOS and most Linux
-    distributions work out of the box.
+    distributions work out of the box. A Mac that's also on Wi-Fi keeps using its Wi-Fi
+    unless you put **iPhone USB** (or **iPad USB**) first: **System Settings → Network →
+    ⋯ → Set Service Order**, drag it above Wi-Fi. Or just turn the Mac's Wi-Fi off.
 
 The band switcher needs nothing else.
 
@@ -109,7 +110,8 @@ Personal Hotspot off; the background services then sleep and use no battery.
 | --- | --- |
 | 🟢 Sharing Wi-Fi over USB | Working |
 | 🔵 Ready: plug in the USB cable | Personal Hotspot is on; plug in |
-| 🔵 Waiting for the computer | Plugged in, the computer is setting up the connection; retried automatically |
+| 🔵 Ready: waiting for the computer | Plugged in, the computer is setting up the connection; retried automatically |
+| 🔵 Connected to the computer | The computer sees the device but isn't using it for internet yet. On a Mac that's on Wi-Fi, see [What you need](#what-you-need) |
 | 🟠 Starting Personal Hotspot | Turning the hotspot on; see the message underneath if it stays |
 | 🟠 Waiting for Wi-Fi | Connect to a Wi-Fi network |
 | 🟠 Airplane mode is on | Personal Hotspot can't run in airplane mode; turn it off |
@@ -132,6 +134,13 @@ The line under the switches says what it's doing, for example *On 5 GHz (−75 d
 keeps working in the background, with sharing on or off, until you turn the switch off.
 Turn it off to let the router choose again.
 
+The first switch after the device has been sitting on the other band for a while can take
+a few seconds while it finds the band. After that, moves are near-instant.
+
+On routers with 6 GHz (Wi-Fi 6E), **Force 5 GHz** counts 6 GHz too, so it leaves a
+device that's on 6 GHz there and the line says *On 6 GHz*. Not tested yet: there was no
+6 GHz device to try it on.
+
 ## How the band switcher works
 
 Many routers use one network name for both bands and move devices between them on their
@@ -142,8 +151,8 @@ If your router can give each band its own name, that's the simplest fix of all.
 
 Each time the router moves the device, the app moves it straight back with a hand-over,
 the same quick switch iOS uses itself. It takes about a quarter of a second and Wi-Fi
-doesn't drop. If a hand-over doesn't work, it disconnects and rejoins instead, which drops
-Wi-Fi for about half a second.
+doesn't disconnect, though a game or a ping may notice a blip. If a hand-over doesn't
+work, it disconnects and rejoins instead, which drops Wi-Fi for about half a second.
 
 - **iPhone X and older, and iPads with an A11 chip or older:** working on an iPhone 6s, and
   the same build covers the rest of these.
@@ -184,9 +193,13 @@ Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
 
 **USB tethering**
 
-- **"Waiting for the computer" for a long time.** The first time on a new USB port,
+- **"Ready: waiting for the computer" for a long time.** The first time on a new USB port,
   Windows can miss the connection. The app restarts the hotspot to make it try again; if
   that doesn't help, unplug and plug back in.
+- **Mac: "iPhone USB" says *Attached* and the app says "Connected to the computer".**
+  The Mac is using another connection (usually its Wi-Fi) and keeps the iPhone on
+  standby. Put **iPhone USB** above Wi-Fi in **System Settings → Network → ⋯ → Set Service
+  Order**, or turn the Mac's Wi-Fi off.
 - **"Trust This Computer?"** That comes from Apple's software on the computer (iTunes or
   Apple Devices), which asks to pair with any iPhone it sees. Tethering doesn't use it, so
   it works whichever you tap. Tap **Trust** on your own computer and it won't ask again.
@@ -197,17 +210,26 @@ Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
 - **Computer says "No internet" or "Unidentified network".** Unplug and plug back in so
   the computer asks for a new address. On Windows, `ipconfig /renew` in Command Prompt
   does the same.
+- **Computer stuck on "Identifying", or the connection keeps dropping.** The USB link
+  itself keeps resetting, so the computer never finishes connecting. The log shows
+  `sharing stopped (the USB network to the computer went away…)` every so often. Restart
+  the iPhone or iPad first (that fixed it in testing), then try another cable or USB port
+  (a port on the computer itself, not a hub), and restart the computer.
 - **Slow?** The computer gets about what the device's own Wi-Fi gets. The **Wi-Fi** row
   shows the band: on **2.4 GHz** everything is a lot slower than on 5 GHz. Turn on
   **Force 5 GHz Wi-Fi**.
 - **Testing while the computer is also on Wi-Fi.** The computer may keep using its own
-  Wi-Fi. Turn the computer's Wi-Fi off to test.
+  Wi-Fi. Turn the computer's Wi-Fi off to test (on a Mac, see above).
 
 **Wi-Fi band switcher**
 
 - **Wi-Fi blips now and then.** That's the router moving the device to the other band and
   the app moving it straight back. Where the hand-over doesn't work, each move back drops
   Wi-Fi for about half a second.
+- **The first switch takes a few seconds.** Normal after the device has sat on the other
+  band for a while: it has to find the band first. If iOS won't look for it, the app
+  turns Wi-Fi off and on by itself (at most every 10 minutes), the same as doing it in
+  Settings. If it ever seems stuck, turning Wi-Fi off and on yourself sorts it too.
 - **"Paused for a few minutes" or "Couldn't stay on 5 GHz".** The router keeps moving it
   back faster than it can stay, usually because the 5 GHz signal is weak where you are.
   It tries again by itself; moving closer to the router helps.
@@ -247,7 +269,9 @@ root) fills that gap whenever sharing is on:
    and disconnects Wi-Fi. If Wi-Fi drops while the hotspot is on, it hides the hotspot and
    turns Wi-Fi back on (MobileWiFi `WiFiManagerClientSetPower`). Airplane mode is switched
    with RadiosPreferences (AppSupport), as Control Center does. Whether a computer is
-   plugged in comes from IOKit's external power adapter details (USB host family codes).
+   plugged in comes from IOKit's external power adapter details (USB host family codes);
+   iOS's `com.apple.mobile.lockdown.host_attached` / `host_detached` notifications say when
+   a computer's Apple device software is talking to it.
 5. **Fast reconnects.** Rules in the main filter ruleset record every new TCP connection
    from the computer, and answer packets of connections with no record (dropped because
    the route changed) with a TCP reset, so the computer reconnects at once instead of
@@ -259,11 +283,14 @@ root) fills that gap whenever sharing is on:
    knows the moment the router moves the device. It moves back with a hand-over first: a
    small add-on loaded into iOS's Wi-Fi service (`src/roam`, loaded into `wifid`) asks for
    iOS's own roam to that band, the same request iOS makes by itself when 2.4 GHz is poor.
-   iOS picks the radio, so this needs no scan. If it doesn't work, the app looks up the
-   forced band's radio among the networks iOS has seen recently (or scans, if it isn't
-   there), then disconnects and joins it, telling iOS to avoid the other band's radios
-   for that one join. It backs off when the device won't stay, and changes nothing
-   about the network or its saved settings. The add-on is built twice: arm64 for A11 chips
+   iOS picks the radio, so this needs no scan. The first hand-over after the device has
+   sat on one band for a while often doesn't move it, since the chip hasn't seen the
+   other band lately. Then the app looks up the forced band's radio among the networks
+   iOS has seen recently, or scans for it and tries the hand-over once more. If that
+   doesn't work either, it disconnects and joins the radio, telling iOS to avoid the
+   other band's radios for that one join. If iOS won't scan, it turns Wi-Fi off and on
+   (at most every 10 minutes). It backs off when the device won't stay, and changes
+   nothing about the network or its saved settings. The add-on is built twice: arm64 for A11 chips
    and older, and arm64e (with pointer authentication) for A12 and newer. If iOS's Wi-Fi
    service restarts straight after a hand-over request, the app stops asking for
    hand-overs until the switch is turned off and on.

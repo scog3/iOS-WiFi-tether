@@ -15,7 +15,8 @@ that can't be given separate names.
   fast and as gently as possible.
 - **What works now:** notice the move from the Wi-Fi driver's events, then move back with
   iOS's own hand-over (roam), requested by a small add-on inside `wifid`. In testing that
-  took 278 ms with no disconnect. The fallback, disconnect and join with an avoid list,
+  took 250–500 ms with no disconnect; a ping to the router through the iPhone loses about
+  one reply per hand-over. The fallback, disconnect and join with an avoid list,
   takes about 0.66 s, with about 0.45 s of no Wi-Fi.
 
 ## What moves the iPhone between bands
@@ -40,6 +41,7 @@ Newest first. The 0.4.18 builds were development builds that led to 1.0.
 
 | Version | What changed | Result |
 | --- | --- | --- |
+| 1.4 | Scan requests spaced at least 0.15 s apart, and an unanswered one retried after a few seconds; the hand-over is given up after 1.2 s instead of about 3 s; after a real scan, one more hand-over before the fallback join; if iOS turns down scans twice in a move, Wi-Fi is turned off and on (at most every 10 minutes); the app's own hand-overs no longer counted as router kicks | Fixes a hang in 1.3 (see Open questions). Not yet measured |
 | 1.3 | When the hand-over doesn't move it and no radio is known, the radio is looked up in wifid's beacon cache (scan option `BeaconCacheOnly`) instead of a real scan, so the fallback join starts at once | The first switch to 2.4 GHz from 5 GHz should take about 4 s instead of 30 s or more |
 | 1.2 | Moves start with the hand-over straight away, with no scan (iOS picks the radio); a scan only for the fallback join. A scan that misses a band seen before on this network no longer counts as "not in range" | iOS often turns down scans while on 5 GHz, which delayed band switches by up to 30 s and once gave up for 5 minutes |
 | 1.1 | Hand-over add-on also built for arm64e (A12 and newer), with Apple's compiler on a Mac build runner; hand-overs stop if iOS's Wi-Fi service restarts right after one | Untested on A12 and newer |
@@ -63,7 +65,7 @@ Newest first. The 0.4.18 builds were development builds that led to 1.0.
 
 ## Measurements
 
-Seven moves in the order they happened during testing.
+Moves in the order they happened during testing.
 
 | Move | Build | 5 GHz signal | Time on 5 GHz before | Back on 5 GHz after | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -74,6 +76,7 @@ Seven moves in the order they happened during testing.
 | 5 | dev 6 | −75 dBm | 37 s | 1.5 s | Accepted 0.5 s after the move |
 | 6 | dev 7 | −81 dBm | 51 s | 0.66 s | Disconnect and join, about 0.45 s without Wi-Fi |
 | 7 | dev 8 | −78 dBm | — | 278 ms | Hand-over from 2.4 GHz, no disconnect (started by hand, not by the router) |
+| 8–13 | 1.3 | −77 to −83 dBm | 30 s to 8 min | 255–502 ms | Six router kicks in 14 minutes, each handed back with no disconnect |
 
 Where the time goes with disconnect-and-join: the move is noticed in the same millisecond;
 iOS's own view of the connection catches up in 0.1–0.5 s; then about 0.2 s to disconnect
@@ -93,23 +96,31 @@ and 0.5–0.7 s for the join handshake with the router.
 
 ## Open questions
 
-- [ ] **Hand-over straight after a router move:** the hand-over was first tested from a
-  manual start on 2.4 GHz. Watch the log for a move followed by `handed over` or
-  `hand-over didn't move it`.
-- [ ] **Does the router give up steering?** After the first hand-overs the iPhone stayed on
-  5 GHz for long stretches at about −80 dBm. That could be chance or band steering giving up
-  on a device that keeps coming straight back. The 5-minute status lines will show it.
+- [x] **Hand-over straight after a router move:** works. Six router kicks in a row were
+  handed back in 255–502 ms with no disconnect (moves 8–13).
+- [x] **Does the router give up steering?** No sign of it. One night it kicked six times in
+  14 minutes at −77 to −83 dBm, 30 s to 8 minutes after each hand-back; another evening
+  there were no kicks for 50 minutes at −73 to −82 dBm. The kicks come and go rather than
+  stopping.
 - [x] **Band preference 1 for 2.4 GHz** in the hand-over request: confirmed on the iPhone 6s
   (handed over to 2.4 GHz in 233 ms, no disconnect).
 - [ ] **Why iOS turns down scans while on 5 GHz** (error 0x10, busy) on the iPhone 6s.
   Scans on 2.4 GHz work. wifid's reasons for refusing include "autojoin is busy", "in
   autojoin deferral period", "critical phase is ON" and "hosting AWDL session"; which one
   applies here isn't known. Since 1.3 the fallback reads wifid's beacon cache first.
+  Separately, iOS rejects a scan request that comes less than 0.1 s after the previous one
+  ("called 0.02s ago, rejecting, min time between successive calls is 0.10s") and never
+  answers it. 1.3's cache look-up followed by a real scan hit this and hung; 1.4 spaces
+  requests out.
 - [ ] **The first hand-over to a band the iPhone hasn't used lately doesn't move it.**
   Switching to 2.4 GHz from 5 GHz without a recent scan failed three times in a row (about
-  3 s each); after one join to 2.4 GHz, hand-overs both ways worked. Likely the chip only
-  roams to channels it has seen the network on recently. Hand-overs back to 5 GHz after a
-  router kick aren't affected, since the iPhone was just there.
+  3 s each); after one join to 2.4 GHz, hand-overs both ways worked. The same happens the
+  other way: after the iPhone had sat on 2.4 GHz for hours, four hand-overs to 5 GHz in a
+  row didn't move it; after Wi-Fi was turned off and on, hand-overs both ways worked at
+  once (248–302 ms). Likely the chip only roams to channels it has seen the network on
+  recently. Hand-overs back after a router kick aren't affected, since the iPhone was just
+  there. Since 1.4, a failed first hand-over is followed by a scan and one more hand-over:
+  `handed over to … (after a scan)` in the log means a scan is enough.
 - [ ] **Newer iPhones:** since 1.1 the add-on is also built for arm64e, so iPhone XS, XR and
   newer should load it, but none has been tested. Check the log for `hand-over add-on loaded`
   and `handed over to`. Clang 18 on Linux can't make a proper arm64e build (its output is
@@ -136,11 +147,13 @@ The code is in `src/daemon/main.m` (the Wi-Fi band section) and `src/roam/roam.m
 | `WiFiDeviceClientDisassociate`, `WiFiDeviceClientAssociateAsync`, the saved password from `WiFiManagerClientCopyNetworks` | The disconnect-and-join fallback |
 | `BSS_BLACKLIST { BSS_BLACKLIST_BSSIDS }` set on the join record | Per-join avoid list of the other band's radios (up to 3) |
 | Wi-Fi driver event messages (read-only kernel event socket) | Noticing moves the moment they happen |
+| `WiFiManagerClientSetPower` / `GetPower` | Last resort when iOS won't scan during a move: Wi-Fi off and on, checked to be back on |
 | `WiFiTetherRoam.dylib`, loaded into `wifid` | Posts `wifid`'s own roam request: `com.apple.wifid.wifiroammanagerroamnotification` on `WiFiRoamManager`'s queue, band preference 1 (2.4 GHz) or 2 (5 GHz), reason 5 |
 | Darwin notifications `com.wifitether.roam5`, `.ready`, `.done` | Request (state = band preference), add-on loaded (state = `wifid`'s pid), answer |
 | `prefer-5ghz`, `prefer-24ghz` in `/var/mobile/Library/WiFiTether/` | The two switches |
 | `band5-call` in the same folder | Crash guard: if a Wi-Fi call crashes the service, the band switch stays off until it's turned off and on |
 
 Log lines worth searching `daemon.log` for: `force 5 GHz: on`, `hand-over add-on loaded`,
-`the router disconnected the iPhone`, `handed over to`, `hand-over didn't move it`,
-`ms after disconnecting`, and `status:` (every 5 minutes).
+`the router disconnected the`, `again after`, `handed over to`, `hand-over didn't move it`,
+`after a scan`, `ms after disconnecting`, `turning Wi-Fi off and on`, and `status:`
+(every 5 minutes; its kick count is the number of `again after` lines).

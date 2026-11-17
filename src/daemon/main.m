@@ -270,7 +270,6 @@ static void writeVpnIf(const char *name)
         NSLog(@"wifitetherd: VPN interface %s", name);
 }
 
-/* Keep the logs small: launchd appends to them, so truncating is safe. */
 /* "iPhone", "iPad" or "iPod touch", for messages people see. */
 static NSString *deviceWord(void)
 {
@@ -280,6 +279,8 @@ static NSString *deviceWord(void)
     return !strncmp(m, "iPad", 4) ? @"iPad" : !strncmp(m, "iPod", 4) ? @"iPod touch" : @"iPhone";
 }
 
+/* vpn.log (the VPN helper's output) is emptied past 1 MB; launchd appends to
+ * it, so truncating is safe. */
 static void trimLog(const char *path)
 {
     struct stat st;
@@ -355,7 +356,7 @@ static void restoreFwd(void)
     }
 }
 
-static void teardown(void)
+static void teardown(NSString *why)
 {
     if (!g_applied)
         return;
@@ -364,7 +365,7 @@ static void teardown(void)
     pfn_stop();
     g_applied = 0;
     g_key[0] = 0;
-    NSLog(@"wifitetherd: sharing stopped");
+    NSLog(@"wifitetherd: sharing stopped (%@)", why);
 }
 
 static NSString *ipStr(in_addr_t a)
@@ -891,10 +892,84 @@ static NSString *controlHotspot(const WTIf *up, const WTIf *lan, int air)
     return nil;
 }
 
+/* iOS's lockdown service posts these when a computer running Apple's device
+ * software (Finder, iTunes or Apple Devices) starts or stops talking to the
+ * phone over USB. That says a computer is connected, though not whether it
+ * will use the phone for internet: a Mac that's online another way keeps
+ * "iPhone USB" on standby ("Attached"). Used for the waiting message and the
+ * log. -1: no word since WiFi Tether started. */
+static int g_hostAttached = -1;
+
+static void hostWatchStart(void)
+{
+    static int onTok = -1, offTok = -1;
+
+    if (onTok >= 0)
+        return;
+    notify_register_dispatch("com.apple.mobile.lockdown.host_attached", &onTok, dispatch_get_main_queue(), ^(int t) {
+        if (g_hostAttached != 1)
+            NSLog(@"wifitetherd: a computer is connected to the %@ (its Apple device software)", deviceWord());
+        g_hostAttached = 1;
+    });
+    notify_register_dispatch("com.apple.mobile.lockdown.host_detached", &offTok, dispatch_get_main_queue(), ^(int t) {
+        if (g_hostAttached != 0)
+            NSLog(@"wifitetherd: the computer's Apple device software disconnected");
+        g_hostAttached = 0;
+    });
+}
+
+/* The phone's network interfaces and their state (up, link, IPv4), logged
+ * when they change while waiting for the computer and when sharing starts, to
+ * see how a computer that's connected but not using the phone (a Mac on Wi-Fi)
+ * looks from the phone. VPN tunnels and loopback are left out. */
+static void logInterfaces(const char *when)
+{
+    static NSString *last;
+    struct ifaddrs *ifs, *i;
+    NSMutableDictionary *seen = [NSMutableDictionary dictionary];
+    NSMutableArray *order = [NSMutableArray array];
+    NSString *s;
+
+    if (getifaddrs(&ifs) != 0)
+        return;
+    for (i = ifs; i; i = i->ifa_next) {
+        NSString *name = [NSString stringWithUTF8String:i->ifa_name];
+        NSString *d;
+        if ([name hasPrefix:@"lo"] || [name hasPrefix:@"utun"] || [name hasPrefix:@"ipsec"])
+            continue;
+        d = seen[name];
+        if (!d) {
+            d = [NSString stringWithFormat:@"%@(%s%s", name, (i->ifa_flags & IFF_UP) ? "up" : "down",
+                                           (i->ifa_flags & IFF_RUNNING) ? ",link" : ""];
+            [order addObject:name];
+        }
+        if (i->ifa_addr && i->ifa_addr->sa_family == AF_INET && ![d hasSuffix:@",ip"])
+            d = [d stringByAppendingString:@",ip"];
+        seen[name] = d;
+    }
+    freeifaddrs(ifs);
+    s = @"";
+    for (NSString *name in order)
+        s = [s stringByAppendingFormat:@"%@%@)", s.length ? @" " : @"", seen[name]];
+    if ([s isEqualToString:last])
+        return;
+    last = s;
+    NSLog(@"wifitetherd: interfaces (%s): %@", when, s);
+}
+
+/* The Mac tip, for when a computer is plugged in but hasn't connected. */
+static NSString *macTip(void)
+{
+    return [NSString stringWithFormat:@"If it's a Mac that's on Wi-Fi, move %@ USB above Wi-Fi (System Settings → "
+                                      @"Network → ⋯ → Set Service Order), or turn its Wi-Fi off.", deviceWord()];
+}
+
 /* Hotspot on, but the computer hasn't set up the USB network. The first time
  * on a new USB port Windows misses the phone switching it on; restarting the
  * hotspot is the software version of replugging. Retries keep going while a
- * computer is plugged in, further apart each time. Returns a status detail. */
+ * computer is plugged in, further apart each time; they're only in the log,
+ * since a Mac that's online another way never connects however often it's
+ * nudged. Returns a status detail. */
 static NSString *usbWait(void)
 {
     time_t now = time(NULL);
@@ -905,6 +980,7 @@ static NSString *usbWait(void)
         g_usbWaitStart = 0;
         return nil;
     }
+    logInterfaces("waiting for the computer");
     if (!g_usbWaitStart) {
         g_usbWaitStart = now;
         g_usbTries = 0;
@@ -921,11 +997,91 @@ static NSString *usbWait(void)
         g_usbNextRetry = now + gaps[g_usbTries - 1 < 2 ? g_usbTries - 1 : 2];
     }
     if (pc != 1 && g_usbTries >= 4 && now >= g_usbNextRetry)
-        return @"Still not connected. Unplug the cable and plug it back in.";
+        return [NSString stringWithFormat:@"Not connected yet. %@ Otherwise, unplug the cable and plug it back in.",
+                                          macTip()];
+    if (g_hostAttached == 1)
+        return g_usbTries ? [NSString stringWithFormat:@"Waiting for it to use the %@ for internet. %@", deviceWord(), macTip()]
+                          : [NSString stringWithFormat:@"Waiting for it to use the %@ for internet…", deviceWord()];
     if (!g_usbTries)
         return @"Waiting for the computer to connect…";
-    return [NSString stringWithFormat:@"Waiting for the computer to connect… (try %d). "
-            "If the iPhone asks to Trust This Computer, tap Trust.", g_usbTries + 1];
+    return [NSString stringWithFormat:@"Waiting for the computer to connect. If the %@ asks to Trust This Computer, "
+                                      @"tap Trust. %@", deviceWord(), macTip()];
+}
+
+/* Why sharing stopped, for the log. "The USB network went away" while the
+ * cable still reads as plugged in means the computer (or a loose connection)
+ * reset the USB link; not plugged in means the cable or port lost contact. */
+static NSString *stopReason(int en, const WTIf *up, const WTIf *lan)
+{
+    if (!en)
+        return @"switched off";
+    if (!up->ok)
+        return @"Wi-Fi has no connection";
+    if (!lan->ok) {
+        if (hotspotState() != MIS_ON)
+            return @"Personal Hotspot went off";
+        switch (computerPlugged()) {
+        case 0:  return @"the USB network to the computer went away; no computer reads as plugged in";
+        case 1:  return @"the USB network to the computer went away; the cable still reads as plugged in";
+        default: return @"the USB network to the computer went away";
+        }
+    }
+    return @"settings changed";
+}
+
+/* When the hotspot's DHCP server (bootpd) gives the computer an address, from
+ * its lease file (read-only, if iOS keeps it where macOS does), so the log
+ * shows whether the computer got that far. Only addresses on the hotspot's
+ * subnet are logged, and nothing about the computer itself. */
+#define DHCP_LEASES "/var/db/dhcpd_leases"
+
+static void dhcpLeaseCheck(const WTIf *lan)
+{
+    static struct timespec seenTime;
+    static NSMutableDictionary *seen;   /* address -> lease expiry */
+    static int first = 1, missingLogged;
+    struct stat sb;
+    NSString *text;
+
+    if (!lan->ok)
+        return;
+    if (stat(DHCP_LEASES, &sb) != 0) {
+        if (!missingLogged) {
+            NSLog(@"wifitetherd: can't see the hotspot's DHCP leases (" DHCP_LEASES "), "
+                  "so the log won't say when the computer gets an address");
+            missingLogged = 1;
+        }
+        return;
+    }
+    if (!first && sb.st_mtimespec.tv_sec == seenTime.tv_sec && sb.st_mtimespec.tv_nsec == seenTime.tv_nsec)
+        return;
+    seenTime = sb.st_mtimespec;
+    text = [NSString stringWithContentsOfFile:@DHCP_LEASES encoding:NSUTF8StringEncoding error:nil];
+    if (!text)
+        return;
+    if (!seen)
+        seen = [NSMutableDictionary dictionary];
+    for (NSString *entry in [text componentsSeparatedByString:@"}"]) {
+        NSString *ip = nil, *lease = nil;
+        struct in_addr a;
+        for (NSString *line in [entry componentsSeparatedByString:@"\n"]) {
+            NSString *t = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            if ([t hasPrefix:@"ip_address="])
+                ip = [t substringFromIndex:11];
+            else if ([t hasPrefix:@"lease="])
+                lease = [t substringFromIndex:6];
+        }
+        if (!ip || !lease || inet_pton(AF_INET, ip.UTF8String, &a) != 1)
+            continue;
+        if ((a.s_addr & lan->mask) != (lan->ip & lan->mask) || a.s_addr == lan->ip)
+            continue;
+        if ([seen[ip] isEqualToString:lease])
+            continue;
+        if (!first)   /* leases from before WiFi Tether started aren't news */
+            NSLog(@"wifitetherd: the hotspot's DHCP gave the computer %@", ip);
+        seen[ip] = lease;
+    }
+    first = 0;
 }
 
 /* ---------------------------------------------------------------------------
@@ -942,8 +1098,14 @@ static NSString *usbWait(void)
  *   - The forced band's radio is remembered from a scan.
  *   - Move back by hand-over first: the add-on in wifid (src/roam) asks iOS
  *     for its own roam to that band, with no disconnect.
- *   - Fallback: disconnect, then join the remembered radio with the other
- *     band's radios on that join's avoid list (BSS_BLACKLIST).
+ *   - The first hand-over after the iPhone has sat on one band for a while
+ *     often doesn't move it (the chip hasn't seen the other band lately):
+ *     then find the radio (iOS's recently seen networks, else a scan and one
+ *     more hand-over).
+ *   - Fallback: disconnect, then join the radio with the other band's radios
+ *     on that join's avoid list (BSS_BLACKLIST).
+ *   - If iOS won't scan, turn Wi-Fi off and on (as toggling it in Settings
+ *     does), at most every 10 minutes.
  *   - Back off when it doesn't stick, so Wi-Fi stays usable.
  * Nothing about the network or its saved settings is changed.
  * docs/band-switching-research.md has what was tried and what worked.
@@ -969,6 +1131,7 @@ static struct {
     CFStringRef  (*copyPassword)(void *);
     void         (*setPassword)(void *, CFStringRef);
     void         (*setPower)(void *, bool);
+    int          (*getPower)(void *);
     CFDictionaryRef (*copyRecord)(void *);
     void         (*setProp)(void *, CFStringRef, CFTypeRef);
 } B5;
@@ -1009,8 +1172,16 @@ static int         g_b5Kicks, g_b5MoveCount;  /* since Force went on, for the st
 static time_t      g_b5LastKick, g_b5LastBeat;
 static int         g_b5ScanLearn;            /* the scan in flight only learns the radio (already on the band) */
 static int         g_b5LearnFails;           /* learning scans iOS turned down in a row */
+static int         g_b5Band;                 /* the band it's on (2, 5, 6; 0 unknown), for the app */
+static double      g_b5LastScanCall;         /* iOS rejects scan requests less than 0.1 s apart */
+static unsigned    g_b5ScanGen;              /* which scan request an answer (or its time-out) belongs to */
+static int         g_b5HandAfterScan;        /* 1: after the scan, hand over again before joining; 2: done */
+static int         g_b5MoveScanFails;        /* scans in this move iOS turned down or didn't answer */
+static time_t      g_b5PowerCycledAt;        /* last time Wi-Fi was turned off and on to unstick a move */
+static double      g_b5OwnUntil;             /* driver events until then come from our own move */
 
 static void b5Tick(void);
+static void b5TickSoon(double seconds);
 
 /* If one of these private calls ever crashes the service, it must not take
  * sharing down with it on every restart: a file marks a call in progress, and
@@ -1055,6 +1226,7 @@ static int b5Init(void)
     B5.copyPassword = dlsym(RTLD_DEFAULT, "WiFiNetworkCopyPassword");
     B5.setPassword = dlsym(RTLD_DEFAULT, "WiFiNetworkSetPassword");
     B5.setPower = dlsym(RTLD_DEFAULT, "WiFiManagerClientSetPower");
+    B5.getPower = dlsym(RTLD_DEFAULT, "WiFiManagerClientGetPower");
     B5.copyRecord = dlsym(RTLD_DEFAULT, "WiFiNetworkCopyRecord");
     B5.setProp = dlsym(RTLD_DEFAULT, "WiFiNetworkSetProperty");
     if (!create || !schedule || !B5.copyDevices || !B5.copyCurrent || !B5.getProp ||
@@ -1105,13 +1277,36 @@ static const char *b5BandName(int band)
     return band < 0 ? "no Wi-Fi" : band == 2 ? "2.4 GHz" : band == 5 ? "5 GHz" : band == 6 ? "6 GHz" : "an unknown band";
 }
 
+/* Wi-Fi off, then on again 1.5 s later, like toggling it in Settings. Checks
+ * afterwards that it really came back on, so it's never left off. */
+static void b5PowerOn(int tries)
+{
+    if (B5.getPower && B5.getPower(B5.mgr) != 0)
+        return;
+    if (tries >= 3) {
+        NSLog(@"wifitetherd: band: Wi-Fi didn't come back on; turn it on in Settings");
+        return;
+    }
+    if (tries)
+        NSLog(@"wifitetherd: band: Wi-Fi still off; turning it on again");
+    b5GuardBegin("power");
+    B5.setPower(B5.mgr, true);
+    b5GuardEnd();
+    if (B5.getPower)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            b5PowerOn(tries + 1);
+        });
+}
+
 static void b5Power(void)
 {
     if (!B5.setPower)
         return;
+    b5GuardBegin("power");
     B5.setPower(B5.mgr, false);
+    b5GuardEnd();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1500 * NSEC_PER_MSEC)),
-                   dispatch_get_main_queue(), ^{ B5.setPower(B5.mgr, true); });
+                   dispatch_get_main_queue(), ^{ b5PowerOn(0); });
 }
 
 static NSString *b5Str(NSDictionary *rec, NSString *key)
@@ -1143,6 +1338,8 @@ static void b5EndMove(void)
         CFRelease(g_b5Joining);
         g_b5Joining = NULL;
     }
+    if (g_b5Busy)   /* the driver can report a hand-over's own events just after it's done */
+        g_b5OwnUntil = CFAbsoluteTimeGetCurrent() + 1.5;
     g_b5Busy = 0;
     b5GuardEnd();
 }
@@ -1155,6 +1352,7 @@ static int b5CurrentBand(void)
     if (!cur)
         return -1;
     band = b5Band(cur);
+    g_b5Band = band;
     if (b5OnWant(band))
         g_b5Rssi = b5Int(cur, CFSTR("RSSI"));
     CFRelease(cur);
@@ -1249,9 +1447,10 @@ static void b5Joined(void *dev, void *net, CFDictionaryRef info, void *err, void
     }
     b5GuardEnd();
     if (err) {
-        NSLog(@"wifitetherd: band: iOS couldn't join the %s radio (error %p, %d ms)", b5WantName(), err, b5Ms());
+        NSLog(@"wifitetherd: band: iOS couldn't join the %s radio (error %p, %d ms); trying again in 30 seconds",
+              b5WantName(), err, b5Ms());
         g_b5State = @"failed";
-        g_b5NextTry = time(NULL) + 120;
+        g_b5NextTry = time(NULL) + 30;
         b5DropTarget();
         b5EndMove();
         return;
@@ -1395,15 +1594,45 @@ static void b5Scanned(void *dev, CFArrayRef results, void *err, void *ctx);
  * with no radio scan: instant, and never turned down as busy, which iOS
  * often does to real scans while on 5 GHz. If the radio isn't there, a real
  * scan follows. */
-static void b5StartScan(int learn, int fromCache)
+static unsigned g_b5ScanWaiting;   /* the scan request an answer is due for; 0 none */
+
+/* iOS turns down a scan request that comes less than 0.1 s after the previous
+ * one ("called 0.02s ago, rejecting") and never answers it, so requests are
+ * spaced 0.15 s apart. A scan that isn't answered in time (3 s from the
+ * cache, 8 s for a real scan) counts as turned down. */
+static void b5ScanCall(unsigned gen)
 {
     static CFDictionaryRef opts, cacheOpts;
+    double now = CFAbsoluteTimeGetCurrent(), wait = g_b5LastScanCall + 0.15 - now;
+    int fromCache = g_b5ScanCache;
 
+    if (gen != g_b5ScanGen || !g_b5Running || !g_b5Busy)
+        return;   /* superseded, or the switch went off */
+    if (wait > 0) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            b5ScanCall(gen);
+        });
+        return;
+    }
     if (!opts)
         opts = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks,
                                   &kCFTypeDictionaryValueCallBacks);
     if (!cacheOpts)
         cacheOpts = CFBridgingRetain(@{ @"BeaconCacheOnly": @YES });
+    g_b5LastScanCall = now;
+    g_b5ScanWaiting = gen;
+    b5GuardBegin("scan");
+    B5.scan(B5.dev, fromCache ? cacheOpts : opts, b5Scanned, (void *)(uintptr_t)gen);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (fromCache ? 3 : 8) * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (g_b5ScanWaiting != gen || !g_b5Running)
+            return;
+        NSLog(@"wifitetherd: band: no answer to the %s after %d s", fromCache ? "look-up" : "scan", fromCache ? 3 : 8);
+        b5Scanned(B5.dev, NULL, NULL, (void *)(uintptr_t)gen);
+    });
+}
+
+static void b5StartScan(int learn, int fromCache)
+{
     if (fromCache && g_b5SkipCache)
         fromCache = 0;
     if (!fromCache)
@@ -1412,17 +1641,68 @@ static void b5StartScan(int learn, int fromCache)
     g_b5BusySince = time(NULL);
     g_b5ScanLearn = learn;
     g_b5ScanCache = fromCache;
-    b5GuardBegin("scan");
-    B5.scan(B5.dev, fromCache ? cacheOpts : opts, b5Scanned, NULL);
+    b5ScanCall(++g_b5ScanGen);
+}
+
+/* Last resort when iOS won't scan during a move: turn Wi-Fi off and on, the
+ * same as toggling it in Settings. iOS scans everything as it reconnects, and
+ * hand-overs work after that. At most once every 10 minutes. */
+static int b5Unstick(time_t now)
+{
+    if (g_b5MoveScanFails < 2 || !B5.setPower || (g_b5PowerCycledAt && now - g_b5PowerCycledAt < 600))
+        return 0;
+    NSLog(@"wifitetherd: band: iOS won't scan for the %s radio; turning Wi-Fi off and on, like toggling it in Settings",
+          b5WantName());
+    g_b5PowerCycledAt = now;
+    g_b5MoveScanFails = 0;
+    g_b5ScanThenJoin = 0;
+    g_b5HandAfterScan = 0;
+    g_b5State = @"restarting";
+    g_b5Rescued = 1;
+    g_b5QuietUntil = now + 30;   /* sharing: not a Wi-Fi drop to fix */
+    g_b5NextTry = now + 6;       /* then a hand-over as usual, now that iOS has scanned */
+    b5Power();
+    b5TickSoon(7);
+    return 1;
+}
+
+/* A scan in a move was turned down, wasn't answered, or saw nothing: try
+ * again in 2 seconds; the second time, turn Wi-Fi off and on (b5Unstick);
+ * after 4, wait a minute. */
+static void b5MoveScanFailed(time_t now, NSString *what)
+{
+    g_b5MoveScanFails++;
+    if (b5Unstick(now))
+        return;
+    if (g_b5MoveScanFails >= 4) {
+        NSLog(@"wifitetherd: band: %@; trying again in a minute", what);
+        g_b5MoveScanFails = 0;
+        g_b5State = @"failed";
+        g_b5NextTry = now + 60;
+        return;
+    }
+    NSLog(@"wifitetherd: band: %@; trying again in 2 seconds", what);
+    g_b5NextTry = now + 2;
+    b5TickSoon(2.2);
+}
+
+/* A check sooner than the next 5-second one. */
+static void b5TickSoon(double seconds)
+{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (g_b5Running && !g_b5Busy)
+            b5Tick();
+    });
 }
 
 static void b5Join(void *net, int rssi);
 static void b5HandoverTry(int rssi);
 
-/* After a hand-over request: watch every 50 ms, for 1.5 seconds, whether the
- * iPhone is on 5 GHz. If not: once hand-overs have worked here, try again
- * (2, then 4 seconds later; a hand-over doesn't drop Wi-Fi, so it's cheap),
- * then fall back to disconnecting and joining. */
+/* After a hand-over request: watch every 50 ms, for 1.2 seconds (the ones
+ * that work take 0.25-0.5 s), whether the iPhone is on the forced band. If
+ * not: once hand-overs have worked here, try again (2, then 4 seconds later;
+ * a hand-over doesn't drop Wi-Fi, so it's cheap), then fall back to
+ * disconnecting and joining. */
 static void b5HandWatch(int checks, int rssi)
 {
     int band = b5CurrentBand();
@@ -1432,23 +1712,26 @@ static void b5HandWatch(int checks, int rssi)
         return;
     }
     if (b5OnWant(band)) {
-        NSLog(@"wifitetherd: band: handed over to %s in %d ms, without disconnecting", b5WantName(), b5Ms());
+        NSLog(@"wifitetherd: band: handed over to %s in %d ms, without disconnecting%s", b5BandName(band), b5Ms(),
+              g_b5HandAfterScan == 2 ? " (after a scan)" : "");
         g_b5LandedAt = time(NULL);
         g_b5State = @"on5";
         g_b5FailStreak = 0;
         g_b5NextTry = 0;
         g_b5HandWorked = 1;
         g_b5HandFails = 0;
+        g_b5HandAfterScan = 0;
+        g_b5MoveScanFails = 0;
         b5EndMove();
         return;
     }
-    if (checks < 30) {
+    if (b5Ms() < 1200) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
             b5HandWatch(checks + 1, rssi);
         });
         return;
     }
-    if (g_b5HandWorked && g_b5HandTries < 3) {
+    if (g_b5HandWorked && g_b5HandTries < 3 && g_b5HandAfterScan != 2) {
         int gap = g_b5HandTries == 1 ? 2 : 4;
         NSLog(@"wifitetherd: band: hand-over %d didn't move it (on %s); trying again in %d s", g_b5HandTries,
               b5BandName(band), gap);
@@ -1473,7 +1756,8 @@ static void b5HandWatch(int checks, int rssi)
               @"until the switch is turned off and on");
         g_b5HandBroken = 1;
     }
-    if (++g_b5HandFails >= 3) {
+    /* The second try after a scan doesn't count: the first one already did. */
+    if (g_b5HandAfterScan != 2 && ++g_b5HandFails >= 3) {
         NSLog(@"wifitetherd: band: hand-overs aren't working here; disconnecting and rejoining for the next 10 minutes");
         g_b5HandOffUntil = time(NULL) + 600;
         g_b5HandFails = 0;
@@ -1485,10 +1769,17 @@ static void b5HandWatch(int checks, int rssi)
         b5Join(net, rssi);
         CFRelease(net);
     } else {
-        /* It went without a scan: find the radio now, then join it. */
-        NSLog(@"wifitetherd: band: hand-over didn't move it (on %s after %d ms); scanning for the %s radio to "
-              @"join it instead", b5BandName(band), b5Ms(), b5WantName());
+        /* It went without a scan, and the chip may only hand over to radios
+         * it has seen lately (the first switch after the iPhone has sat on
+         * one band for a while). Find the radio: from iOS's recently seen
+         * networks, else with a scan and then one more hand-over; join it if
+         * that doesn't move it either. */
+        NSLog(@"wifitetherd: band: hand-over didn't move it (on %s after %d ms); looking for the %s radio",
+              b5BandName(band), b5Ms(), b5WantName());
         g_b5ScanThenJoin = 1;
+        if (!g_b5HandAfterScan)
+            g_b5HandAfterScan = 1;
+        g_b5State = @"finding";
         b5StartScan(0, 1);
     }
 }
@@ -1532,6 +1823,8 @@ static void b5Move(void *net, int rssi)
         g_b5QuickBacks = 0;
     }
     g_b5MoveCount++;
+    g_b5HandAfterScan = 0;
+    g_b5MoveScanFails = 0;
     /* Hand-over first, where the add-on is there: no disconnect, and no scan
      * needed, since iOS picks the radio. net (the radio from a scan, for the
      * fallback) may be NULL. */
@@ -1564,6 +1857,9 @@ static void b5ScannedBody(CFArrayRef results, void *err);
 
 static void b5Scanned(void *dev, CFArrayRef results, void *err, void *ctx)
 {
+    if ((unsigned)(uintptr_t)ctx != g_b5ScanWaiting || !g_b5ScanWaiting)
+        return;   /* an answer that came after its time-out, or for a scan the switch no longer wants */
+    g_b5ScanWaiting = 0;
     b5GuardBegin("scan result");
     b5ScannedBody(results, err);
     if (!g_b5Busy)   /* a join started inside keeps the mark until it answers */
@@ -1601,8 +1897,9 @@ static void b5ScannedBody(CFArrayRef results, void *err)
             g_b5NextScan5 = now + (g_b5LearnFails >= 3 ? 1800 : 30);
             return;
         }
-        NSLog(@"wifitetherd: band: scan failed (error %p); trying again soon", err);
-        g_b5NextTry = now + 5;      /* usually busy: iOS is scanning or roaming itself */
+        /* Usually busy: iOS is scanning or roaming itself. */
+        b5MoveScanFailed(now, err ? [NSString stringWithFormat:@"scan turned down (error %p)", err]
+                                  : @"the scan wasn't answered");
         return;
     }
     for (CFIndex i = 0; i < CFArrayGetCount(results); i++) {
@@ -1651,8 +1948,7 @@ static void b5ScannedBody(CFArrayRef results, void *err)
             g_b5NextScan5 = now + (++g_b5LearnFails >= 3 ? 1800 : 30);
             return;
         }
-        NSLog(@"wifitetherd: band: the scan didn't see this network at all; trying again in 5 seconds");
-        g_b5NextTry = now + 5;
+        b5MoveScanFailed(now, @"the scan didn't see this network at all");
         return;
     }
     if (learn)
@@ -1703,8 +1999,24 @@ static void b5ScannedBody(CFArrayRef results, void *err)
         g_b5ScanThenJoin = 0;
         return;
     }
-    if (g_b5ScanThenJoin) {   /* a hand-over already didn't work: join */
+    if (g_b5ScanThenJoin) {   /* a hand-over already didn't work */
         g_b5ScanThenJoin = 0;
+        g_b5MoveScanFails = 0;
+        if (!cached && g_b5HandAfterScan == 1 && b5HandAvailable(now)) {
+            /* A real scan: the chip has now seen the radio, so the hand-over
+             * may work this time, with no disconnect. If not, b5HandWatch
+             * joins this radio. */
+            g_b5HandAfterScan = 2;
+            NSLog(@"wifitetherd: band: found the %s radio (channel %d, %d dBm); trying the hand-over again",
+                  b5WantName(), b5Int(best, CFSTR("CHANNEL")), bestRssi);
+            if (g_b5Joining)
+                CFRelease(g_b5Joining);
+            g_b5Joining = (void *)CFRetain(best);
+            g_b5Busy = 1;
+            g_b5BusySince = now;
+            b5HandoverTry(bestRssi);
+            return;
+        }
         b5Join(best, bestRssi);
         return;
     }
@@ -1752,11 +2064,12 @@ static void b5TickBody(void)
         g_b5State = @"nowifi";
         return;
     }
-    if (g_b5Busy && now - g_b5BusySince > 30) {
-        NSLog(@"wifitetherd: band: no answer from iOS's Wi-Fi service; trying again later");
+    if (g_b5Busy && now - g_b5BusySince > 30) {   /* scans time out sooner, in b5ScanCall */
+        NSLog(@"wifitetherd: band: no answer from iOS's Wi-Fi service; trying again in 15 seconds");
+        g_b5ScanWaiting = 0;
         b5EndMove();
         g_b5State = @"failed";
-        g_b5NextTry = now + 120;
+        g_b5NextTry = now + 15;
     }
 
     cur = B5.copyCurrent(B5.dev);
@@ -1769,12 +2082,14 @@ static void b5TickBody(void)
             g_b5QuietUntil = now + 30;
             b5Power();
         }
-        if (!g_b5Busy)
-            g_b5State = @"nowifi";
+        g_b5Band = 0;
+        if (!g_b5Busy && !(g_b5PowerCycledAt && now - g_b5PowerCycledAt < 20))
+            g_b5State = @"nowifi";   /* (turning Wi-Fi off and on keeps saying so for a while) */
         return;
     }
     g_b5LastWifi = now;
     band = b5Band(cur);
+    g_b5Band = band;
     if (now - g_b5LastBeat >= 300) {   /* a status line every 5 minutes, so a quiet log still says something */
         g_b5LastBeat = now;
         NSLog(@"wifitetherd: band: status: on %s at %d dBm (channel %d); %d kick(s) and %d move(s) since Force %s "
@@ -1825,8 +2140,12 @@ static void b5TickBody(void)
     }
     /* On the other band. */
     if (g_b5LandedAt && [g_b5State isEqualToString:@"on5"]) {
+        /* Moved off the forced band: that's a kick (counted here rather than
+         * at the driver's disconnect event, which hand-overs send too). */
         NSLog(@"wifitetherd: band: on %s again after %ld s on %s", b5BandName(band), (long)(now - g_b5LandedAt),
               b5WantName());
+        g_b5Kicks++;
+        g_b5LastKick = now;
         g_b5State = @"searching";
     }
     if (g_b5Busy || now < g_b5NextTry || !g_b5SSID)
@@ -1837,7 +2156,8 @@ static void b5TickBody(void)
         return;
     }
     if (![g_b5State isEqualToString:@"weak"] && ![g_b5State isEqualToString:@"no5"] &&
-        ![g_b5State isEqualToString:@"flapping"] && ![g_b5State isEqualToString:@"failed"])
+        ![g_b5State isEqualToString:@"flapping"] && ![g_b5State isEqualToString:@"failed"] &&
+        !g_b5ScanThenJoin)
         g_b5State = @"searching";
     b5StartScan(0, 1);
 }
@@ -1936,11 +2256,8 @@ static void b5EventsStart(void)
                 size_t dl = m->total_size - sizeof(*m);
                 NSLog(@"wifitetherd: events: %s (%u)%s%@", name, m->event_code,
                       dl ? " data " : "", dl ? hexOf(m->data, dl > 48 ? 48 : dl) : @"");
-                if (m->event_code == 32 && !g_b5Busy) {
-                    g_b5Kicks++;
-                    g_b5LastKick = time(NULL);
-                    NSLog(@"wifitetherd: band: the router disconnected the iPhone; checking the band now");
-                }
+                if (m->event_code == 32 && !g_b5Busy && CFAbsoluteTimeGetCurrent() >= g_b5OwnUntil)
+                    NSLog(@"wifitetherd: band: the router disconnected the %@; checking the band now", deviceWord());
             }
             switch (m->event_code) {
             case 2: case 3: case 4: case 30: case 32: case 140:
@@ -1982,6 +2299,8 @@ static void b5Stop(void)
     b5EndMove();   /* a move in flight finds nothing to finish */
     g_b5State = @"off";
     g_b5Rssi = 0;
+    g_b5Band = 0;
+    g_b5ScanWaiting = 0;
     b5EventsStop();
     g_b5NextScan5 = 0;
     b5GuardEnd();
@@ -1998,6 +2317,8 @@ static void b5Start(void)
     g_b5HandOffUntil = 0;
     g_b5HandBroken = 0;
     g_b5ScanThenJoin = 0;
+    g_b5HandAfterScan = 0;
+    g_b5MoveScanFails = 0;
     g_b5Kicks = g_b5MoveCount = 0;
     g_b5LastKick = 0;
     g_b5LastBeat = time(NULL);
@@ -2087,7 +2408,7 @@ static void reconcile(void)
             if (m && m != g_misdPid) {
                 NSLog(@"wifitetherd: the hotspot service restarted (%d -> %d); restarting to reconnect",
                       (int)g_misdPid, (int)m);
-                teardown();
+                teardown(@"the hotspot service restarted");
                 b5GuardEnd();
                 exit(0);   /* launchd starts us again */
             }
@@ -2169,8 +2490,12 @@ static void reconcile(void)
             dhcpRestore();
         st[@"gateway"] = @(gwOk);
 
+        if (en)
+            dhcpLeaseCheck(&lan);
+
         if (!en || !up.ok || !lan.ok) {
-            teardown();
+            if (g_applied)
+                teardown(stopReason(en, &up, &lan));
             writeVpnIf("");
             if (up.ok) {   /* the app shows a connected VPN even while it isn't shared */
                 WTIf v = findVPN(&up);
@@ -2243,6 +2568,7 @@ static void reconcile(void)
                     ok = 1;
                     NSLog(@"wifitetherd: sharing %s -> %s (dns %@, anchor \"%s\")",
                           lan.name, up.name, ipStr(dns), g_anchor);
+                    logInterfaces("sharing");
                 } while (0);
 
                 if (!ok) {
@@ -2283,8 +2609,10 @@ static void reconcile(void)
             detail = control;
         st[@"state"] = state;
         st[@"detail"] = detail;
+        st[@"host"] = @(g_hostAttached == 1);
         st[@"band5"] = g_b5State;
         st[@"band5want"] = @(g_b5Want);
+        st[@"band5band"] = @(g_b5Band);   /* 6 when Force 5 GHz has it on 6 GHz */
         if (g_b5Running && g_b5HandReady >= 0)
             st[@"band5hand"] = @(g_b5HandReady == 1 && !g_b5HandBroken);
         if (g_b5Rssi)
@@ -2311,7 +2639,7 @@ static dispatch_source_t watchSignal(int sig)
     signal(sig, SIG_IGN);
     s = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, sig, 0, dispatch_get_main_queue());
     dispatch_source_set_event_handler(s, ^{
-        teardown();
+        teardown(@"WiFi Tether stopping");
         dhcpRestore();
         writeStatus(@{ @"state": @"stopped", @"detail": @"",
                        @"updated": @0, @"enabled": @(isEnabled()) });
@@ -2397,6 +2725,7 @@ int main(int argc, char **argv)
         }
         g_sigterm = watchSignal(SIGTERM);
         g_sigint = watchSignal(SIGINT);
+        hostWatchStart();
 
         notify_register_dispatch(WT_NOTIFY, &g_notifyToken, dispatch_get_main_queue(), ^(int t) {
             reconcile();
