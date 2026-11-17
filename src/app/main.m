@@ -381,9 +381,9 @@ static NSString *logText(void)
                      @"It loads into every app, so an app that looks for tweaks (some banking apps and games) "
                      @"could notice it, even with this off. If one does, turn tweaks off for that app with Choicy.";
     UILabel *noteFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
-    noteFoot.text = @"A quiet notification in Notification Centre: the Wi-Fi band, then USB sharing, VPN "
-                    @"pass-through and band lock, each on or off. It updates by itself, with no sound or banner. "
-                    @"If you clear it, it comes back at the next change.";
+    noteFoot.text = @"A quiet notification in Notification Centre: the band Wi-Fi is on now, then USB sharing, "
+                    @"VPN pass-through and Force band. It updates by itself, with no sound or banner. If you "
+                    @"clear it, it comes back at the next change.";
     UILabel *statusHead = wtHeader(@"Status bar"), *noteHead = wtHeader(@"Notification Centre"),
             *logHead = wtHeader(@"Log");
 

@@ -13,10 +13,10 @@
   it does when sharing mobile data. iOS only takes it from the phone's cellular service,
   which never says it's sharing when the hotspot shares Wi-Fi. Respring once after
   installing.
-- **Status notification** (optional): one quiet notification in Notification Centre with a
-  short summary: *Wi-Fi: 5 GHz*, then *USB sharing*, *VPN pass-through* and *Band lock*,
-  each on or off. Always the same lines, so nothing jumps around. No sound or banner; it
-  updates by itself.
+- **Status notification** (optional): one quiet notification in Notification Centre. The
+  title is the band Wi-Fi is on now (*Wi-Fi band: 5 GHz*), then three short lines: *USB
+  sharing: ON*, *VPN pass-through: OFF*, *Force band: 5 GHz*. Always the same lines, so
+  nothing jumps around. No sound or banner; it updates by itself.
 
 **App**
 

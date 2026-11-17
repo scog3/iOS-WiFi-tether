@@ -2613,27 +2613,26 @@ static NSString *indBandName(int band)
     return band == 2 ? @"2.4 GHz" : band == 5 ? @"5 GHz" : band == 6 ? @"6 GHz" : nil;
 }
 
-/* What the notification says: the band on top, then the same three lines
- * every time (only their values change), so nothing appears or disappears:
- *   Wi-Fi: 5 GHz
- *   USB sharing: on, computer connected
- *   VPN pass-through: off (no VPN)
- *   Band lock: Force 5 GHz
- * Shown whenever the notification is switched on. */
+/* What the notification says. The band Wi-Fi is on now as the title, then
+ * the same three short lines every time (only ON/OFF or the band changes):
+ *   Wi-Fi band: 5 GHz
+ *   USB sharing: ON
+ *   VPN pass-through: OFF
+ *   Force band: 5 GHz
+ * VPN pass-through is ON while a VPN is connected and USB sharing is on (the
+ * computer's traffic goes through the VPN). Shown whenever the notification
+ * is switched on. */
 static NSDictionary *indSummaryNow(void)
 {
     int sharing = g_lastEnabled == 1;
     NSString *band = indBandName(g_indBand);
-    NSString *usb = !sharing ? @"off" : g_applied ? @"on, computer connected" : @"on, waiting for the computer";
-    NSString *vpn = g_indVpnShared         ? @"on"
-                  : !g_indVpn              ? @"off (no VPN)"
-                  : !sharing               ? @"off (USB sharing is off)"
-                  : !g_applied             ? @"on once the computer connects"
-                                           : @"off (VPN not shared)";
-    NSString *lock = !g_b5Running ? @"off" : g_b5Want == 2 ? @"Force 2.4 GHz" : @"Force 5 GHz";
+    NSString *force = !g_b5Running ? @"OFF" : g_b5Want == 2 ? @"2.4 GHz" : @"5 GHz";
     return @{ @"show": @YES,
-              @"title": band ? [@"Wi-Fi: " stringByAppendingString:band] : @"Wi-Fi: not connected",
-              @"body": [NSString stringWithFormat:@"USB sharing: %@\nVPN pass-through: %@\nBand lock: %@", usb, vpn, lock] };
+              @"title": band ? [@"Wi-Fi band: " stringByAppendingString:band] : @"Wi-Fi: not connected",
+              @"body": [NSString stringWithFormat:@"USB sharing: %@\nVPN pass-through: %@\nForce band: %@",
+                                                  sharing ? @"ON" : @"OFF",
+                                                  (g_indVpnShared || (g_indVpn && sharing)) ? @"ON" : @"OFF",
+                                                  force] };
 }
 
 /* After anything that can change the summary: write it, and if it stays

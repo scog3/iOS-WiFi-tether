@@ -56,9 +56,10 @@ like a captive portal you've already signed in to on the phone.
   Settings.
 - **Blue Personal Hotspot indicator.** iOS's own, while the computer is connected, as when
   sharing mobile data.
-- **Status notification.** An optional quiet notification in Notification Centre:
-  *Wi-Fi: 5 GHz*, then *USB sharing*, *VPN pass-through* and *Band lock*, each on or off.
-  No sound or banner, and it updates by itself.
+- **Status notification.** An optional quiet notification in Notification Centre. The
+  title is the band Wi-Fi is on now (*Wi-Fi band: 5 GHz*), then *USB sharing: ON*, *VPN
+  pass-through: OFF* and *Force band: 5 GHz* (or OFF). No sound or banner, and it updates
+  by itself.
 
 Both are in the app's menu (☰ top right, or swipe in from the right edge) under **Settings**, which can also share or copy
 the log for a problem report. **About** has short instructions and the version.
