@@ -16,6 +16,7 @@
 #define WT_PREFER5  WT_DIR @"/prefer-5ghz"
 #define WT_PREFER24 WT_DIR @"/prefer-24ghz"
 #define WT_NOTIFY   "com.wifitether.changed"
+#define WT_RECONNECT "com.wifitether.reconnect"   /* restarts the tries to reach the computer */
 
 @interface WTViewController : UIViewController
 @end
@@ -89,6 +90,7 @@ static NSString *wifiBand(void)
     UIView   *_dot;
     UILabel  *_state;
     UILabel  *_detail;
+    UIButton *_reconnect;   /* shown once the automatic tries to reach the computer are over */
     UILabel  *_wifi;
     UILabel  *_usb;
     UILabel  *_dns;
@@ -242,9 +244,19 @@ static NSString *wifiBand(void)
     _shareCard = [self card:@[shareTitle, shareText, getShare]];
     _shareCard.hidden = YES;
 
+    _reconnect = [UIButton buttonWithType:UIButtonTypeSystem];
+    [_reconnect setTitle:@"Reconnect" forState:UIControlStateNormal];
+    [_reconnect setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    _reconnect.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    _reconnect.backgroundColor = UIColor.systemBlueColor;
+    _reconnect.layer.cornerRadius = 10;
+    [_reconnect.heightAnchor constraintEqualToConstant:44].active = YES;
+    [_reconnect addTarget:self action:@selector(reconnect) forControlEvents:UIControlEventTouchUpInside];
+    _reconnect.hidden = YES;
+
     UILabel *tetherHeader = [self sectionHeader:@"USB tethering"];
     UILabel *band5Header = [self sectionHeader:@"Wi-Fi band"];
-    UIView *statusCard = [self card:@[stateRow, _detail,
+    UIView *statusCard = [self card:@[stateRow, _detail, _reconnect,
                                       [self row:@"Wi-Fi" value:_wifi],
                                       [self row:@"Hotspot / USB" value:_usb],
                                       [self row:@"DNS" value:_dns],
@@ -501,6 +513,7 @@ static NSString *untestedText(void)
         _vpn.text = [NSString stringWithFormat:@"%@, not shared yet", vpn];
     _detail.text = @"";
     _detail.hidden = YES;
+    _reconnect.hidden = YES;
 
     /* Without Share nothing works: show how to get it and grey out the switch. */
     BOOL noShare = fresh && st[@"share"] && ![st[@"share"] boolValue];
@@ -534,8 +547,14 @@ static NSString *untestedText(void)
     } else if ([state isEqualToString:@"waitcomputer"]) {
         /* "Connected": a computer's Apple device software is talking to the
          * phone, but the computer isn't using it for internet (yet). */
-        [self showState:[st[@"host"] boolValue] ? @"Connected to the computer" : @"Ready: waiting for the computer"
-                  color:UIColor.systemBlueColor];
+        BOOL done = [st[@"usbDone"] boolValue];
+        if ([st[@"host"] boolValue])
+            [self showState:@"Connected to the computer" color:UIColor.systemYellowColor];
+        else if (done)
+            [self showState:@"Computer didn't connect" color:UIColor.systemOrangeColor];
+        else
+            [self showState:@"Waiting for the computer" color:UIColor.systemBlueColor];
+        _reconnect.hidden = !done;
     } else if ([state isEqualToString:@"ready"]) {
         [self showState:@"Ready: plug in the USB cable" color:UIColor.systemBlueColor];
     } else if ([state isEqualToString:@"nohotspot"]) {
@@ -568,6 +587,12 @@ static NSString *untestedText(void)
             [[UIApplication sharedApplication] openURL:[NSURL URLWithString:SHARE_REPO]
                                                options:@{} completionHandler:nil];
     }];
+}
+
+- (void)reconnect
+{
+    _reconnect.hidden = YES;   /* until the tries are over again */
+    notify_post(WT_RECONNECT);
 }
 
 - (void)toggled:(UISwitch *)sender

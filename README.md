@@ -110,8 +110,9 @@ Personal Hotspot off; the background services then sleep and use no battery.
 | --- | --- |
 | 🟢 Sharing Wi-Fi over USB | Working |
 | 🔵 Ready: plug in the USB cable | Personal Hotspot is on; plug in |
-| 🔵 Ready: waiting for the computer | Plugged in, the computer is setting up the connection; retried automatically |
-| 🔵 Connected to the computer | The computer sees the device but isn't using it for internet yet. On a Mac that's on Wi-Fi, see [What you need](#what-you-need) |
+| 🔵 Waiting for the computer | Plugged in, the computer is setting up the connection; the app retries up to 4 times |
+| 🟡 Connected to the computer | The computer sees the device but isn't using it for internet yet. On a Mac that's on Wi-Fi, see [What you need](#what-you-need) |
+| 🟠 Computer didn't connect | The retries are over: tap **Reconnect**, or unplug and plug back in |
 | 🟠 Starting Personal Hotspot | Turning the hotspot on; see the message underneath if it stays |
 | 🟠 Waiting for Wi-Fi | Connect to a Wi-Fi network |
 | 🟠 Airplane mode is on | Personal Hotspot can't run in airplane mode; turn it off |
@@ -193,9 +194,11 @@ Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
 
 **USB tethering**
 
-- **"Ready: waiting for the computer" for a long time.** The first time on a new USB port,
-  Windows can miss the connection. The app restarts the hotspot to make it try again; if
-  that doesn't help, unplug and plug back in.
+- **"Waiting for the computer" for a long time.** Windows often misses the hotspot coming
+  on when the cable is already in (sharing turned on after plugging in, or a new USB
+  port). The app restarts the hotspot to make it look again, up to 4 times in about a
+  minute. If that doesn't work, tap **Reconnect** to start again, or unplug and plug back
+  in, which is usually quickest.
 - **Mac: "iPhone USB" says *Attached* and the app says "Connected to the computer".**
   The Mac is using another connection (usually its Wi-Fi) and keeps the iPhone on
   standby. Put **iPhone USB** above Wi-Fi in **System Settings → Network → ⋯ → Set Service

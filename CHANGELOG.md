@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.5
+
+**USB tethering**
+
+- **Quicker to connect when Windows misses the hotspot**, for example when sharing is turned
+  on with the cable already in. The first retry comes after 6 seconds instead of 10, and
+  all 4 are done in under a minute.
+- **Waiting for the computer** (blue) shows the retry count again: *Retrying (2 of 4)…*
+- **Connected to the computer** (yellow): the computer sees the phone but isn't using it
+  for internet yet, as with a Mac on Wi-Fi, with a one-line tip.
+- **Computer didn't connect** (orange), once the retries are over, with a **Reconnect**
+  button that starts them again.
+- Shorter messages under the status.
+
 ## 1.4
 
 **Wi-Fi band switcher**

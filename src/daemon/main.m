@@ -957,55 +957,71 @@ static void logInterfaces(const char *when)
     NSLog(@"wifitetherd: interfaces (%s): %@", when, s);
 }
 
-/* The Mac tip, for when a computer is plugged in but hasn't connected. */
-static NSString *macTip(void)
-{
-    return [NSString stringWithFormat:@"If it's a Mac that's on Wi-Fi, move %@ USB above Wi-Fi (System Settings → "
-                                      @"Network → ⋯ → Set Service Order), or turn its Wi-Fi off.", deviceWord()];
-}
+/* Hotspot on, but the computer hasn't set up the USB network. When the
+ * hotspot comes on with the cable already in, Windows often misses it;
+ * restarting the hotspot is the software version of replugging. When Windows
+ * catches it by itself it does within about 5 seconds, and after a restart it
+ * connects 3-8 seconds later, so: the first try at 6 seconds, then 12, 15 and
+ * 20 seconds apart (closer would cut Windows off mid-setup). After 4 tries the
+ * app shows a Reconnect button (WT_RECONNECT), which starts them again.
+ * While the computer's Apple software is connected but the computer isn't
+ * using the phone (a Mac that's online another way keeps it on standby, and
+ * no restart changes that), the app says so instead of showing the tries.
+ * Returns a short status detail. */
+#define USB_TRIES    4
+#define WT_RECONNECT "com.wifitether.reconnect"
+static int g_usbDone;   /* the automatic tries are over */
 
-/* Hotspot on, but the computer hasn't set up the USB network. The first time
- * on a new USB port Windows misses the phone switching it on; restarting the
- * hotspot is the software version of replugging. Retries keep going while a
- * computer is plugged in, further apart each time; they're only in the log,
- * since a Mac that's online another way never connects however often it's
- * nudged. Returns a status detail. */
 static NSString *usbWait(void)
 {
     time_t now = time(NULL);
     int pc = computerPlugged();
-    static const int gaps[] = { 15, 20, 30 };
+    static const int gaps[USB_TRIES] = { 12, 15, 20, 25 };   /* after tries 1-4 */
 
     if (pc == 0) {
         g_usbWaitStart = 0;
+        g_usbDone = 0;
         return nil;
     }
     logInterfaces("waiting for the computer");
     if (!g_usbWaitStart) {
         g_usbWaitStart = now;
         g_usbTries = 0;
-        g_usbNextRetry = now + 10;
+        g_usbDone = 0;
+        g_usbNextRetry = now + 6;
     }
-    if (now >= g_usbNextRetry && (pc == 1 || g_usbTries < 4)) {
-        g_usbTries++;
-        NSLog(@"wifitetherd: computer hasn't connected; restarting Personal Hotspot (try %d)", g_usbTries);
-        g_usbRestartUntil = now + 8;
-        hotspotSet(NO);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            hotspotSet(YES);
-        });
-        g_usbNextRetry = now + gaps[g_usbTries - 1 < 2 ? g_usbTries - 1 : 2];
+    if (now >= g_usbNextRetry && !g_usbDone) {
+        if (g_usbTries >= USB_TRIES) {
+            g_usbDone = 1;
+            NSLog(@"wifitetherd: the computer still hasn't connected after %d tries", USB_TRIES);
+        } else {
+            g_usbTries++;
+            NSLog(@"wifitetherd: computer hasn't connected; restarting Personal Hotspot (try %d)", g_usbTries);
+            g_usbRestartUntil = now + 8;
+            hotspotSet(NO);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                hotspotSet(YES);
+            });
+            g_usbNextRetry = now + gaps[g_usbTries - 1];
+        }
     }
-    if (pc != 1 && g_usbTries >= 4 && now >= g_usbNextRetry)
-        return [NSString stringWithFormat:@"Not connected yet. %@ Otherwise, unplug the cable and plug it back in.",
-                                          macTip()];
     if (g_hostAttached == 1)
-        return g_usbTries ? [NSString stringWithFormat:@"Waiting for it to use the %@ for internet. %@", deviceWord(), macTip()]
-                          : [NSString stringWithFormat:@"Waiting for it to use the %@ for internet…", deviceWord()];
-    if (!g_usbTries)
-        return @"Waiting for the computer to connect…";
-    return [NSString stringWithFormat:@"Waiting for the computer to connect. If the %@ asks to Trust This Computer, "
-                                      @"tap Trust. %@", deviceWord(), macTip()];
+        return [NSString stringWithFormat:@"Not in use yet. On a Mac, move %@ USB above Wi-Fi in Network settings.",
+                                          deviceWord()];
+    if (g_usbDone)
+        return @"Unplug and plug back in, or tap Reconnect.";
+    return g_usbTries ? [NSString stringWithFormat:@"Retrying (%d of %d)…", g_usbTries, USB_TRIES] : @"";
+}
+
+/* The app's Reconnect button: start the tries again, the first one now. */
+static void usbReconnect(void)
+{
+    if (!g_usbWaitStart)
+        return;
+    NSLog(@"wifitetherd: Reconnect tapped; trying again");
+    g_usbTries = 0;
+    g_usbDone = 0;
+    g_usbNextRetry = 0;
 }
 
 /* Why sharing stopped, for the log. "The USB network went away" while the
@@ -2603,13 +2619,16 @@ static void reconcile(void)
             }
         }
 
-        if (lan.ok || !en)
+        if (lan.ok || !en) {
             g_usbWaitStart = 0;
+            g_usbDone = 0;
+        }
         if (control && [state isEqualToString:@"active"] && !detail.length)
             detail = control;
         st[@"state"] = state;
         st[@"detail"] = detail;
         st[@"host"] = @(g_hostAttached == 1);
+        st[@"usbDone"] = @(g_usbWaitStart && g_usbDone);   /* the app shows Reconnect */
         st[@"band5"] = g_b5State;
         st[@"band5want"] = @(g_b5Want);
         st[@"band5band"] = @(g_b5Band);   /* 6 when Force 5 GHz has it on 6 GHz */
@@ -2730,6 +2749,13 @@ int main(int argc, char **argv)
         notify_register_dispatch(WT_NOTIFY, &g_notifyToken, dispatch_get_main_queue(), ^(int t) {
             reconcile();
         });
+        {
+            int tok;
+            notify_register_dispatch(WT_RECONNECT, &tok, dispatch_get_main_queue(), ^(int t) {
+                usbReconnect();
+                reconcile();
+            });
+        }
 
         watchBootpdDir();
 
