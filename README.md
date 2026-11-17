@@ -111,7 +111,7 @@ Personal Hotspot off; the background services then sleep and use no battery.
 | 🟢 Sharing Wi-Fi over USB | Working |
 | 🔵 Ready: plug in the USB cable | Personal Hotspot is on; plug in |
 | 🔵 Waiting for the computer | Plugged in, the computer is setting up the connection; the app retries up to 4 times |
-| 🟡 Connected to the computer | The computer sees the device but isn't using it for internet yet, so the app leaves it to decide (no retries). On a Mac that's on Wi-Fi, see [What you need](#what-you-need) |
+| 🟡 Connected to the computer | The computer sees the device but isn't using it for internet yet; the app retries up to 4 times, then shows **Reconnect**. On a Mac that's on Wi-Fi, see [What you need](#what-you-need) |
 | 🟠 Computer didn't connect | The retries are over: tap **Reconnect**, or unplug and plug back in |
 | 🟠 Starting Personal Hotspot | Turning the hotspot on; see the message underneath if it stays |
 | 🟠 Waiting for Wi-Fi | Connect to a Wi-Fi network |

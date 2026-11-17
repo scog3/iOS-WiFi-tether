@@ -7,16 +7,23 @@
 - **Quicker to connect when Windows misses the hotspot**, for example when sharing is turned
   on with the cable already in. The first retry comes after 6 seconds instead of 10, and
   all 4 are done in under a minute.
-- **Waiting for the computer** (blue) shows the retry count again: *Retrying (2 of 4)…*
-- **Connected to the computer** (yellow): the computer sees the phone but isn't using it
-  for internet yet, as with a Mac on Wi-Fi, with a one-line tip. The app doesn't restart
-  the hotspot then, since that never helps on a Mac: the Mac decides by its own network
-  order. (Windows only sees the phone as it starts using it.)
-- **Computer didn't connect** (orange), once the retries are over, with a **Reconnect**
-  button that starts them again.
+- The retry count shows again: *Retrying (2 of 4)…*
+- **Waiting for the computer** (blue): the computer hasn't seen the phone yet.
+- **Connected to the computer** (yellow): the computer's Apple software sees the phone,
+  but the computer isn't using it for internet yet. Once the retries are over, a
+  one-line tip for a Mac on Wi-Fi shows too.
+- **Computer didn't connect** (orange): the retries are over and the computer never saw
+  the phone.
+- Once the retries are over, a **Reconnect** button starts them again.
 - **No retrying with nothing plugged in.** The app now checks that the phone has external
   power (what shows it charging) before waiting for a computer, so with the cable out it
   just says *Ready: plug in the USB cable*.
+- **Telling a charger from a computer:** the app now reads what's plugged in from the
+  battery's own data, since the call it used before isn't there on iOS 15. Where the
+  phone reports it, a charger no longer counts as a computer. The log shows what each
+  one reports (`power:` lines).
+- The log also shows how the computer set up the phone's USB side (`usb:` lines), to
+  find out whether the phone can tell a Mac from a PC.
 - Shorter messages under the status.
 
 ## 1.4
