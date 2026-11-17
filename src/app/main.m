@@ -6,6 +6,7 @@
 #include <mach/machine.h>
 #include <sys/sysctl.h>
 #import <UIKit/UIKit.h>
+#import <UserNotifications/UserNotifications.h>
 #import <objc/message.h>
 #include <notify.h>
 #include <dlfcn.h>
@@ -17,6 +18,10 @@
 #define WT_PREFER24 WT_DIR @"/prefer-24ghz"
 #define WT_NOTIFY   "com.wifitether.changed"
 #define WT_RECONNECT "com.wifitether.reconnect"   /* restarts the tries to reach the computer */
+#define WT_BANDLABEL  WT_DIR @"/band-label"            /* "0": no band on the Wi-Fi icon */
+#define WT_STATUSNOTE WT_DIR @"/status-notification"   /* "1": the status notification is on */
+#define WT_SUMMARY    WT_DIR @"/summary.plist"         /* what it says, written by wifitetherd */
+#define WT_REPO       @"https://github.com/scog3/iOS-WiFi-tether"
 
 @interface WTViewController : UIViewController
 @end
@@ -84,6 +89,633 @@ static NSString *wifiBand(void)
     CFRelease(devs);
     return band;
 }
+
+/* ── Settings ───────────────────────────────────────────────────────────── */
+
+static void writeSetting(NSString *path, BOOL on)
+{
+    [[NSFileManager defaultManager] createDirectoryAtPath:WT_DIR withIntermediateDirectories:YES
+                                               attributes:nil error:nil];
+    [(on ? @"1" : @"0") writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    notify_post(WT_NOTIFY);
+}
+
+static BOOL bandLabelOn(void)   /* on unless switched off */
+{
+    NSString *s = [NSString stringWithContentsOfFile:WT_BANDLABEL encoding:NSUTF8StringEncoding error:nil];
+    return s == nil || ![s hasPrefix:@"0"];
+}
+
+static BOOL statusNoteOn(void)
+{
+    NSString *s = [NSString stringWithContentsOfFile:WT_STATUSNOTE encoding:NSUTF8StringEncoding error:nil];
+    return [s hasPrefix:@"1"];
+}
+
+/* ── The status notification ────────────────────────────────────────────
+ * One quiet notification in Notification Centre (no sound, no banner) with
+ * what wifitetherd writes to summary.plist: the band and the band switch on
+ * the first line, sharing and VPN on the second. It's replaced in place
+ * (same identifier), never added to. wifitetherd starts the app in the
+ * background when the summary changes; the app updates it and quits, so the
+ * next change starts it afresh. */
+static NSDictionary *g_posted;   /* what's in Notification Centre, as far as this run knows */
+static BOOL          g_cleared;  /* removed once in this run */
+
+static void updateStatusNotification(void (^done)(void))
+{
+    UNUserNotificationCenter *c = UNUserNotificationCenter.currentNotificationCenter;
+    NSDictionary *sum = statusNoteOn() ? [NSDictionary dictionaryWithContentsOfFile:WT_SUMMARY] : nil;
+
+    if (![sum[@"show"] boolValue]) {
+        if (g_posted || !g_cleared) {
+            [c removeDeliveredNotificationsWithIdentifiers:@[@"status"]];
+            g_posted = nil;
+            g_cleared = YES;
+        }
+        if (done)
+            done();
+        return;
+    }
+    if ([sum isEqualToDictionary:g_posted]) {
+        if (done)
+            done();
+        return;
+    }
+    UNMutableNotificationContent *n = [UNMutableNotificationContent new];
+    n.title = [sum[@"title"] description] ?: @"Tether & Band";
+    n.body = [sum[@"body"] description] ?: @"";
+    n.threadIdentifier = @"status";
+    n.interruptionLevel = UNNotificationInterruptionLevelPassive;   /* straight to the list, quietly */
+    UNNotificationRequest *r = [UNNotificationRequest requestWithIdentifier:@"status" content:n trigger:nil];
+    [c addNotificationRequest:r withCompletionHandler:^(NSError *e) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!e) {
+                g_posted = sum;
+                g_cleared = NO;
+            }
+            if (done)
+                done();
+        });
+    }];
+}
+
+/* ── Shared look: cards and grey section titles, like Settings ───────────── */
+
+static UILabel *wtLabel(CGFloat size, UIFontWeight weight, UIColor *color)
+{
+    UILabel *l = [UILabel new];
+    l.font = [UIFont systemFontOfSize:size weight:weight];
+    l.textColor = color;
+    l.numberOfLines = 0;
+    return l;
+}
+
+static UIView *wtCard(NSArray<UIView *> *views)
+{
+    UIView *card = [UIView new];
+    card.backgroundColor = UIColor.secondarySystemGroupedBackgroundColor;
+    card.layer.cornerRadius = 12;
+    UIStackView *s = [[UIStackView alloc] initWithArrangedSubviews:views];
+    s.axis = UILayoutConstraintAxisVertical;
+    s.spacing = 10;
+    s.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:s];
+    [NSLayoutConstraint activateConstraints:@[
+        [s.topAnchor constraintEqualToAnchor:card.topAnchor constant:14],
+        [s.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-14],
+        [s.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
+        [s.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
+    ]];
+    return card;
+}
+
+static UILabel *wtHeader(NSString *text)
+{
+    UILabel *l = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    NSMutableParagraphStyle *p = [NSMutableParagraphStyle new];
+    p.firstLineHeadIndent = 16;
+    p.headIndent = 16;
+    l.attributedText = [[NSAttributedString alloc] initWithString:text.uppercaseString attributes:@{
+        NSFontAttributeName: l.font, NSForegroundColorAttributeName: l.textColor, NSParagraphStyleAttributeName: p}];
+    return l;
+}
+
+/* A scrolling page of cards, at most 540 points wide (iPads), like the main screen. */
+static void wtScrollPage(UIViewController *vc, UIStackView *stack)
+{
+    UIScrollView *scroll = [UIScrollView new];
+    scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    scroll.alwaysBounceVertical = YES;
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [vc.view addSubview:scroll];
+    [scroll addSubview:stack];
+    UILayoutGuide *safe = vc.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [scroll.topAnchor constraintEqualToAnchor:vc.view.topAnchor],
+        [scroll.bottomAnchor constraintEqualToAnchor:vc.view.bottomAnchor],
+        [scroll.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor],
+        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:20],
+        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-28],
+        [stack.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
+        [stack.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:16],
+        [stack.trailingAnchor constraintLessThanOrEqualToAnchor:safe.trailingAnchor constant:-16],
+        [stack.widthAnchor constraintLessThanOrEqualToConstant:540],
+    ]];
+    NSLayoutConstraint *fill = [stack.widthAnchor constraintEqualToAnchor:safe.widthAnchor constant:-32];
+    fill.priority = UILayoutPriorityRequired - 1;
+    fill.active = YES;
+}
+
+static NSString *appVersion(void)
+{
+    return [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
+}
+
+/* GitHub builds are "1.6-87": the number after the dash is the build. */
+static NSString *appBuild(void)
+{
+    NSString *v = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"";
+    NSRange dash = [v rangeOfString:@"-" options:NSBackwardsSearch];
+    return dash.location != NSNotFound ? [v substringFromIndex:dash.location + 1] : @"local";
+}
+
+/* ── The log, to send with a problem report ─────────────────────────────── */
+
+static NSString *readText(NSString *path)   /* UTF-8, or byte-for-byte if a cut left a broken character */
+{
+    NSData *d = [NSData dataWithContentsOfFile:path];
+    if (!d.length)
+        return nil;
+    return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]
+        ?: [[NSString alloc] initWithData:d encoding:NSISOLatin1StringEncoding];
+}
+
+/* The background service's log (the older part first), with the version and
+ * device on top and the end of the VPN helper's log after it. */
+static NSString *logText(void)
+{
+    char machine[64] = "";
+    size_t n = sizeof(machine);
+    NSMutableString *t = [NSMutableString string];
+    NSDateFormatter *f = [NSDateFormatter new];
+
+    sysctlbyname("hw.machine", machine, &n, NULL, 0);
+    f.dateFormat = @"yyyy-MM-dd HH:mm:ss";
+    [t appendFormat:@"Tether & Band %@ (build %@) on %s, iOS %@, %@\n\n", appVersion(), appBuild(), machine,
+                    UIDevice.currentDevice.systemVersion, [f stringFromDate:[NSDate date]]];
+    for (NSString *name in @[@"daemon.log.old", @"daemon.log"]) {
+        NSString *s = readText([WT_DIR stringByAppendingPathComponent:name]);
+        if (s.length)
+            [t appendFormat:@"===== %@ =====\n%@\n", name, s];
+    }
+    NSString *vpn = readText([WT_DIR stringByAppendingPathComponent:@"vpn.log"]);
+    if (vpn.length)
+        [t appendFormat:@"===== vpn.log (end) =====\n%@\n",
+                        vpn.length > 100000 ? [vpn substringFromIndex:vpn.length - 100000] : vpn];
+    return t;
+}
+
+/* ── Settings page ──────────────────────────────────────────────────────── */
+
+@interface WTSettingsController : UIViewController
+@end
+
+@implementation WTSettingsController {
+    UISwitch *_label;
+    UISwitch *_note;
+    UIButton *_share;
+    UIButton *_copy;
+}
+
+- (UIButton *)logButton:(NSString *)title action:(SEL)action
+{
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    [b setTitle:title forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont systemFontOfSize:17];
+    b.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return b;
+}
+
+/* As a .txt file: AirDrop, Save to Files, Mail, Messages... */
+- (void)shareLog:(UIButton *)sender
+{
+    NSDateFormatter *f = [NSDateFormatter new];
+    f.dateFormat = @"yyyyMMdd-HHmm";
+    NSString *dir = [WT_DIR stringByAppendingPathComponent:@"export"];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    [fm removeItemAtPath:dir error:nil];   /* only the latest one is kept */
+    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *path = [dir stringByAppendingPathComponent:
+                          [NSString stringWithFormat:@"TetherBand-log-%@.txt", [f stringFromDate:[NSDate date]]]];
+    if (![logText() writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
+        [sender setTitle:@"Couldn't read the log" forState:UIControlStateNormal];
+        return;
+    }
+    UIActivityViewController *a = [[UIActivityViewController alloc]
+        initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
+    a.popoverPresentationController.sourceView = sender;   /* iPad */
+    a.popoverPresentationController.sourceRect = sender.bounds;
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+/* As text, to paste somewhere: the newest 500 KB. */
+- (void)copyLog
+{
+    NSString *t = logText();
+    if (t.length > 500000)
+        t = [@"(earlier part left out)\n" stringByAppendingString:[t substringFromIndex:t.length - 500000]];
+    UIPasteboard.generalPasteboard.string = t;
+    [_copy setTitle:@"Copied" forState:UIControlStateNormal];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [self->_copy setTitle:@"Copy log" forState:UIControlStateNormal];
+    });
+}
+
+- (UIView *)switchRow:(NSString *)title on:(UISwitch *)sw
+{
+    UILabel *t = wtLabel(17, UIFontWeightRegular, UIColor.labelColor);
+    t.text = title;
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[t, sw]];
+    row.alignment = UIStackViewAlignmentCenter;
+    return row;
+}
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.title = @"Settings";
+    self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
+
+    _label = [UISwitch new];
+    [_label addTarget:self action:@selector(labelToggled:) forControlEvents:UIControlEventValueChanged];
+    _note = [UISwitch new];
+    [_note addTarget:self action:@selector(noteToggled:) forControlEvents:UIControlEventValueChanged];
+
+    UILabel *labelFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    labelFoot.text = @"Shows 5 or 2.4 in the corner of the Wi-Fi icon at the top of the screen, in every app. "
+                     @"After installing or updating, respring once for it to appear.";
+    UILabel *noteFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    noteFoot.text = @"A quiet notification in Notification Centre showing the band and what's switched on. It "
+                    @"updates by itself, with no sound or banner. If you clear it, it comes back at the next change.";
+    UILabel *statusHead = wtHeader(@"Status bar"), *noteHead = wtHeader(@"Notification Centre"),
+            *logHead = wtHeader(@"Log");
+
+    _share = [self logButton:@"Share log file…" action:@selector(shareLog:)];
+    _copy = [self logButton:@"Copy log" action:@selector(copyLog)];
+    UILabel *logFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    logFoot.text = @"What the background service did, to attach to a problem report or send to whoever's "
+                   @"helping. It includes your network's addresses, so only send it to people you trust.";
+
+    UIView *labelBox = [self indented:labelFoot], *noteBox = [self indented:noteFoot];
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        statusHead, wtCard(@[[self switchRow:@"Band on the Wi-Fi icon" on:_label]]), labelBox,
+        noteHead, wtCard(@[[self switchRow:@"Status notification" on:_note]]), noteBox,
+        logHead, wtCard(@[_share, _copy]), [self indented:logFoot],
+    ]];
+    stack.spacing = 6;
+    [stack setCustomSpacing:28 afterView:labelBox];
+    [stack setCustomSpacing:28 afterView:noteBox];
+    wtScrollPage(self, stack);
+}
+
+/* Footers line up with the text in the cards. */
+- (UIView *)indented:(UILabel *)l
+{
+    UIView *box = [UIView new];
+    l.translatesAutoresizingMaskIntoConstraints = NO;
+    [box addSubview:l];
+    [NSLayoutConstraint activateConstraints:@[
+        [l.topAnchor constraintEqualToAnchor:box.topAnchor],
+        [l.bottomAnchor constraintEqualToAnchor:box.bottomAnchor],
+        [l.leadingAnchor constraintEqualToAnchor:box.leadingAnchor constant:16],
+        [l.trailingAnchor constraintEqualToAnchor:box.trailingAnchor constant:-16],
+    ]];
+    return box;
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    _label.on = bandLabelOn();
+    _note.on = statusNoteOn();
+}
+
+- (void)done
+{
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)labelToggled:(UISwitch *)sender
+{
+    writeSetting(WT_BANDLABEL, sender.on);
+}
+
+- (void)noteToggled:(UISwitch *)sender
+{
+    if (!sender.on) {
+        writeSetting(WT_STATUSNOTE, NO);
+        updateStatusNotification(nil);   /* takes it away */
+        return;
+    }
+    [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:UNAuthorizationOptionAlert
+        completionHandler:^(BOOL granted, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (granted) {
+                    writeSetting(WT_STATUSNOTE, YES);
+                    updateStatusNotification(nil);
+                    return;
+                }
+                [self->_note setOn:NO animated:YES];
+                UIAlertController *a = [UIAlertController
+                    alertControllerWithTitle:@"Notifications are off"
+                                     message:@"Allow notifications for Tether & Band in Settings → Notifications, "
+                                             @"then turn this on again."
+                              preferredStyle:UIAlertControllerStyleAlert];
+                [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+                [a addAction:[UIAlertAction actionWithTitle:@"Open Settings" style:UIAlertActionStyleDefault
+                    handler:^(UIAlertAction *x) {
+                        [UIApplication.sharedApplication openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString]
+                                                         options:@{} completionHandler:nil];
+                    }]];
+                [self presentViewController:a animated:YES completion:nil];
+            });
+        }];
+}
+
+@end
+
+/* ── About page ─────────────────────────────────────────────────────────── */
+
+@interface WTAboutController : UIViewController
+@end
+
+@implementation WTAboutController
+
+- (UIView *)textCard:(NSString *)text
+{
+    UILabel *l = wtLabel(15, UIFontWeightRegular, UIColor.labelColor);
+    l.text = text;
+    return wtCard(@[l]);
+}
+
+- (UIButton *)link:(NSString *)title action:(SEL)action
+{
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    [b setTitle:title forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont systemFontOfSize:17];
+    b.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return b;
+}
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    NSString *d = deviceWord();
+    self.title = @"About";
+    self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
+
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"AppIcon60x60"]];
+    icon.layer.cornerRadius = 14;
+    icon.layer.masksToBounds = YES;
+    icon.translatesAutoresizingMaskIntoConstraints = NO;
+    [icon.widthAnchor constraintEqualToConstant:64].active = YES;
+    [icon.heightAnchor constraintEqualToConstant:64].active = YES;
+    UILabel *name = wtLabel(22, UIFontWeightBold, UIColor.labelColor);
+    name.text = @"WiFi Tether & Band Switcher";
+    name.textAlignment = NSTextAlignmentCenter;
+    UILabel *tag = wtLabel(15, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    tag.text = [NSString stringWithFormat:@"Shares this %@'s Wi-Fi or VPN with a computer over USB, and keeps "
+                                          @"Wi-Fi on the band you choose.", d];
+    tag.textAlignment = NSTextAlignmentCenter;
+    UIStackView *top = [[UIStackView alloc] initWithArrangedSubviews:@[icon, name, tag]];
+    top.axis = UILayoutConstraintAxisVertical;
+    top.alignment = UIStackViewAlignmentCenter;
+    top.spacing = 8;
+
+    NSString *usb = [NSString stringWithFormat:
+        @"1. Connect this %1$@ to Wi-Fi.\n"
+        @"2. Turn on Share Wi-Fi over USB.\n"
+        @"3. Plug the %1$@ into the computer.\n\n"
+        @"The computer goes online through this %1$@'s Wi-Fi, or through its VPN when one is connected. "
+        @"It needs the Share tweak. Windows needs Apple's drivers, which come with iTunes or Apple Devices. "
+        @"On a Mac that's also on Wi-Fi, turn its Wi-Fi off, or drag %1$@ USB to the top in System Settings → "
+        @"Network → ⋯ → Set Service Order.", d];
+    NSString *band = [NSString stringWithFormat:
+        @"Turn on Force 5 GHz or Force 2.4 GHz. Only one can be on, and it works with sharing off.\n\n"
+        @"Routers that use one name for both bands keep moving devices between them. When that happens, the "
+        @"%@ is moved straight back, usually in well under a second without disconnecting. The first switch "
+        @"after a while can take a few seconds while it finds the band.", d];
+    NSString *how = [NSString stringWithFormat:
+        @"Sharing turns on Personal Hotspot over USB and passes the computer's traffic, DNS included, through "
+        @"Wi-Fi or the VPN. The band switcher notices the router's moves the moment they happen and asks iOS for "
+        @"its own quick hand-over back; if that doesn't work, it rejoins the right band. Nothing about your "
+        @"network or its saved settings is changed.\n\n"
+        @"The band on the Wi-Fi icon and the status notification are in Settings. If something goes wrong, "
+        @"daemon.log in /var/mobile/Library/WiFiTether (Filza) shows what happened."];
+
+    UIButton *repo = [self link:@"Source code and full instructions" action:@selector(openRepo)];
+    UIButton *issue = [self link:@"Report a problem" action:@selector(openIssues)];
+
+    UILabel *foot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    foot.text = [NSString stringWithFormat:@"Version %@ · Build %@\nDeveloper: scog3\nFree and open source (MIT)",
+                                           appVersion(), appBuild()];
+    foot.textAlignment = NSTextAlignmentCenter;
+
+    UILabel *h1 = wtHeader(@"USB tethering"), *h2 = wtHeader(@"Wi-Fi band"), *h3 = wtHeader(@"How it works"),
+            *h4 = wtHeader(@"GitHub");
+    UIView *c1 = [self textCard:usb], *c2 = [self textCard:band], *c3 = [self textCard:how],
+           *c4 = wtCard(@[repo, issue]);
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[top, h1, c1, h2, c2, h3, c3, h4, c4, foot]];
+    stack.spacing = 6;
+    for (UIView *v in @[top, c1, c2, c3, c4])
+        [stack setCustomSpacing:26 afterView:v];
+    wtScrollPage(self, stack);
+}
+
+- (void)done
+{
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)openRepo
+{
+    [UIApplication.sharedApplication openURL:[NSURL URLWithString:WT_REPO] options:@{} completionHandler:nil];
+}
+
+- (void)openIssues
+{
+    [UIApplication.sharedApplication openURL:[NSURL URLWithString:WT_REPO @"/issues"] options:@{}
+                           completionHandler:nil];
+}
+
+@end
+
+/* ── The menu that slides out from the left ─────────────────────────────── */
+
+@interface WTMenuController : UIViewController
+@property (nonatomic, copy) void (^onPick)(NSInteger item);   /* 0 Settings, 1 About */
+@end
+
+@implementation WTMenuController {
+    UIView *_dim;
+    UIView *_panel;
+    CGFloat _width;
+}
+
+- (UIButton *)item:(NSString *)title symbol:(NSString *)symbol tag:(NSInteger)tag
+{
+    UIButtonConfiguration *c = [UIButtonConfiguration plainButtonConfiguration];
+    c.title = title;
+    c.image = [UIImage systemImageNamed:symbol];
+    c.imagePadding = 14;
+    c.baseForegroundColor = UIColor.labelColor;
+    c.contentInsets = NSDirectionalEdgeInsetsMake(12, 4, 12, 4);
+    c.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *in) {
+        NSMutableDictionary *m = [in mutableCopy];
+        m[NSFontAttributeName] = [UIFont systemFontOfSize:18 weight:UIFontWeightMedium];
+        return m;
+    };
+    UIButton *b = [UIButton buttonWithConfiguration:c primaryAction:nil];
+    b.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
+    b.tag = tag;
+    [b addTarget:self action:@selector(picked:) forControlEvents:UIControlEventTouchUpInside];
+    return b;
+}
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.clearColor;
+
+    _dim = [UIView new];
+    _dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
+    _dim.alpha = 0;
+    _dim.translatesAutoresizingMaskIntoConstraints = NO;
+    [_dim addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(close)]];
+    [self.view addSubview:_dim];
+
+    _width = MIN(300, round(self.view.bounds.size.width * 0.8));
+    _panel = [UIView new];
+    _panel.backgroundColor = UIColor.systemBackgroundColor;
+    _panel.layer.shadowColor = UIColor.blackColor.CGColor;
+    _panel.layer.shadowOpacity = 0.2;
+    _panel.layer.shadowRadius = 12;
+    _panel.translatesAutoresizingMaskIntoConstraints = NO;
+    [_panel addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragged:)]];
+    [self.view addSubview:_panel];
+
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"AppIcon60x60"]];
+    icon.layer.cornerRadius = 11;
+    icon.layer.masksToBounds = YES;
+    icon.translatesAutoresizingMaskIntoConstraints = NO;
+    [icon.widthAnchor constraintEqualToConstant:48].active = YES;
+    [icon.heightAnchor constraintEqualToConstant:48].active = YES;
+    UILabel *name = wtLabel(20, UIFontWeightBold, UIColor.labelColor);
+    name.text = @"Tether & Band";
+    UILabel *ver = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    ver.text = [NSString stringWithFormat:@"Version %@", appVersion()];
+    UIStackView *names = [[UIStackView alloc] initWithArrangedSubviews:@[name, ver]];
+    names.axis = UILayoutConstraintAxisVertical;
+    names.spacing = 2;
+    UIStackView *head = [[UIStackView alloc] initWithArrangedSubviews:@[icon, names]];
+    head.spacing = 12;
+    head.alignment = UIStackViewAlignmentCenter;
+
+    UIView *line = [UIView new];
+    line.backgroundColor = UIColor.separatorColor;
+    [line.heightAnchor constraintEqualToConstant:1.0 / UIScreen.mainScreen.scale].active = YES;
+
+    UIStackView *items = [[UIStackView alloc] initWithArrangedSubviews:@[
+        head, line,
+        [self item:@"Settings" symbol:@"gearshape" tag:0],
+        [self item:@"About" symbol:@"info.circle" tag:1],
+    ]];
+    items.axis = UILayoutConstraintAxisVertical;
+    items.spacing = 4;
+    [items setCustomSpacing:18 afterView:head];
+    [items setCustomSpacing:10 afterView:line];
+    items.translatesAutoresizingMaskIntoConstraints = NO;
+    [_panel addSubview:items];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [_dim.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [_dim.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [_dim.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [_dim.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [_panel.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [_panel.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [_panel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [_panel.widthAnchor constraintEqualToConstant:_width],
+        [items.topAnchor constraintEqualToAnchor:_panel.safeAreaLayoutGuide.topAnchor constant:24],
+        [items.leadingAnchor constraintEqualToAnchor:_panel.safeAreaLayoutGuide.leadingAnchor constant:20],
+        [items.trailingAnchor constraintEqualToAnchor:_panel.trailingAnchor constant:-20],
+    ]];
+    _panel.transform = CGAffineTransformMakeTranslation(-_width - 20, 0);
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    [UIView animateWithDuration:0.28 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        self->_panel.transform = CGAffineTransformIdentity;
+        self->_dim.alpha = 1;
+    } completion:nil];
+}
+
+- (void)closeThen:(void (^)(void))then
+{
+    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        self->_panel.transform = CGAffineTransformMakeTranslation(-self->_width - 20, 0);
+        self->_dim.alpha = 0;
+    } completion:^(BOOL f) {
+        [self dismissViewControllerAnimated:NO completion:then];
+    }];
+}
+
+- (void)close
+{
+    [self closeThen:nil];
+}
+
+- (void)picked:(UIButton *)b
+{
+    void (^pick)(NSInteger) = self.onPick;
+    NSInteger item = b.tag;
+    [self closeThen:^{
+        if (pick)
+            pick(item);
+    }];
+}
+
+/* Drag the panel left to close it. */
+- (void)dragged:(UIPanGestureRecognizer *)g
+{
+    CGFloat x = MIN(0, [g translationInView:self.view].x);
+    if (g.state == UIGestureRecognizerStateChanged) {
+        _panel.transform = CGAffineTransformMakeTranslation(x, 0);
+        _dim.alpha = 1 + x / _width;
+    } else if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled) {
+        if (x < -_width / 3 || [g velocityInView:self.view].x < -500) {
+            [self close];
+        } else {
+            [UIView animateWithDuration:0.2 animations:^{
+                self->_panel.transform = CGAffineTransformIdentity;
+                self->_dim.alpha = 1;
+            }];
+        }
+    }
+}
+
+@end
 
 @implementation WTViewController {
     UISwitch *_toggle;
@@ -161,6 +793,19 @@ static NSString *wifiBand(void)
 {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
+
+    /* The menu (Settings, About) slides out from the left. */
+    UIButton *menu = [UIButton buttonWithType:UIButtonTypeSystem];
+    [menu setImage:[UIImage systemImageNamed:@"line.horizontal.3"
+                           withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:22
+                                                                                            weight:UIImageSymbolWeightSemibold]]
+          forState:UIControlStateNormal];
+    menu.accessibilityLabel = @"Menu";
+    [menu addTarget:self action:@selector(openMenu) forControlEvents:UIControlEventTouchUpInside];
+    [menu.widthAnchor constraintEqualToConstant:44].active = YES;
+    [menu.heightAnchor constraintEqualToConstant:44].active = YES;
+    menu.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    UIStackView *menuRow = [[UIStackView alloc] initWithArrangedSubviews:@[menu, [UIView new]]];
 
     UILabel *title = [self labelWithSize:34 weight:UIFontWeightBold color:UIColor.labelColor];
     title.text = @"WiFi Tether &\nBand Switcher";
@@ -262,7 +907,7 @@ static NSString *wifiBand(void)
                                       [self row:@"DNS" value:_dns],
                                       [self row:@"VPN" value:_vpn]]];
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        title, subtitle,
+        menuRow, title, subtitle,
         tetherHeader,
         _shareCard,
         [self card:@[toggleRow]],
@@ -273,6 +918,7 @@ static NSString *wifiBand(void)
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 16;
+    [stack setCustomSpacing:2 afterView:menuRow];
     [stack setCustomSpacing:6 afterView:title];
     [stack setCustomSpacing:24 afterView:subtitle];
     [stack setCustomSpacing:6 afterView:tetherHeader];
@@ -292,7 +938,7 @@ static NSString *wifiBand(void)
         [scroll.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         [scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:24],
+        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:4],
         [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],
         /* Phones: full width with 16-point margins. iPads and other wide
          * screens: at most 540 points wide, centred, like a phone layout. */
@@ -488,6 +1134,7 @@ static NSString *untestedText(void)
 {
     if (++_ticks % 3 == 0)
         notify_post(WT_NOTIFY);   /* keep the status fresh while the app is open */
+    updateStatusNotification(nil);
     if (!_toggle.isTracking)
         _toggle.on = [self enabledSetting];
 
@@ -589,6 +1236,19 @@ static NSString *untestedText(void)
     }];
 }
 
+- (void)openMenu
+{
+    WTMenuController *m = [WTMenuController new];
+    m.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    __weak WTViewController *weakSelf = self;
+    m.onPick = ^(NSInteger item) {
+        UIViewController *page = item == 0 ? [WTSettingsController new] : [WTAboutController new];
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:page];
+        [weakSelf presentViewController:nav animated:YES completion:nil];
+    };
+    [self presentViewController:m animated:NO completion:nil];
+}
+
 - (void)reconnect
 {
     _reconnect.hidden = YES;   /* until the tries are over again */
@@ -608,18 +1268,59 @@ static NSString *untestedText(void)
 
 @end
 
-@interface WTAppDelegate : UIResponder <UIApplicationDelegate>
+@interface WTAppDelegate : UIResponder <UIApplicationDelegate, UNUserNotificationCenterDelegate>
 @property (nonatomic, strong) UIWindow *window;
 @end
 
 @implementation WTAppDelegate
 
+/* Updates the status notification, then quits: the next change starts the
+ * app afresh (a suspended app wouldn't run when wifitetherd starts it). */
+static void updateThenQuit(UIApplication *app)
+{
+    __block UIBackgroundTaskIdentifier task = [app beginBackgroundTaskWithExpirationHandler:^{
+        exit(0);
+    }];
+    updateStatusNotification(^{
+        exit(0);
+    });
+    (void)task;
+}
+
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options
 {
+    UNUserNotificationCenter.currentNotificationCenter.delegate = self;
+    if (application.applicationState == UIApplicationStateBackground) {
+        /* Started in the background by wifitetherd: just the notification. */
+        updateThenQuit(application);
+        return YES;
+    }
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.window.rootViewController = [WTViewController new];
     [self.window makeKeyAndVisible];
     return YES;
+}
+
+- (void)applicationDidEnterBackground:(UIApplication *)application
+{
+    if (statusNoteOn())
+        updateThenQuit(application);
+}
+
+/* While the app is open, the status notification still goes to Notification
+ * Centre (quietly), not on screen. */
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+       willPresentNotification:(UNNotification *)notification
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler
+{
+    completionHandler(UNNotificationPresentationOptionList);
+}
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+didReceiveNotificationResponse:(UNNotificationResponse *)response
+         withCompletionHandler:(void (^)(void))completionHandler
+{
+    completionHandler();   /* tapping it just opens the app */
 }
 
 @end

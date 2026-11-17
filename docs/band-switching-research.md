@@ -92,7 +92,7 @@ and 0.5–0.7 s for the join handshake with the router.
 | Checking every millisecond | Moves are already noticed instantly; the join handshake sets the floor, faster retries meet the router's refusals and add drops, and it costs battery |
 | Router settings (separate band names, turning off steering, fixed channels) | Not available on the router used; fixed channels made no difference |
 | A band lock in the Wi-Fi chip itself | Not tried yet; see Open questions |
-| Sending logs from inside the app | Crashed the app; logs are copied off the phone with Filza instead |
+| Sending logs from inside the app (0.4.18 dev 4) | Crashed the app on open; removed. 1.6 adds it back in Settings (Share log file, Copy log), built only when tapped |
 
 ## Open questions
 

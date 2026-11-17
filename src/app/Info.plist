@@ -48,7 +48,7 @@
 		<string>iPhoneOS</string>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>@VERSION@</string>
+	<string>@BUILD@</string>
 	<key>DTPlatformName</key>
 	<string>iphoneos</string>
 	<key>LSRequiresIPhoneOS</key>

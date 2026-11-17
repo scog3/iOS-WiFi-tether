@@ -76,9 +76,10 @@ else
         -install_name /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherRoam.dylib \
         src/roam/roam.m -framework Foundation -framework CoreFoundation -o "$B/WiFiTetherRoam.dylib"
 fi
-# Which processors the add-on is built for (arm64e = A12 and newer), for the
-# log and GitHub's run summary (build/roam-archs.txt).
-ROAM_ARCHS="$(python3 - "$B/WiFiTetherRoam.dylib" <<'PY' 2>/dev/null || echo unknown
+# Which processors an add-on is built for (arm64e = A12 and newer), for the
+# log and GitHub's run summary (build/roam-archs.txt, build/bar-archs.txt).
+archs() {
+python3 - "$1" <<'PY' 2>/dev/null || echo unknown
 import struct, sys
 d = open(sys.argv[1], 'rb').read()
 def name(cpu, sub):
@@ -93,14 +94,32 @@ if magic in (0xcafebabe, 0xcafebabf):   # fat: big-endian headers, 20 or 32 byte
 else:
     print(name(*struct.unpack_from('<II', d, 4)))
 PY
-)"
+}
+ROAM_ARCHS="$(archs "$B/WiFiTetherRoam.dylib")"
 echo "   hand-over add-on built for: $ROAM_ARCHS"
 echo "$ROAM_ARCHS" > "$B/roam-archs.txt"
+
+echo "== Building status bar add-on (src/bar: the band on the Wi-Fi icon)"
+# It loads into every app, and SpringBoard and Apple's apps are arm64e on A12
+# and newer, so the same goes as for the hand-over add-on (BAR_DYLIB from
+# GitHub's Mac build).
+if [ -n "${BAR_DYLIB:-}" ] && [ -f "$BAR_DYLIB" ]; then
+    echo "   using $BAR_DYLIB (arm64 + arm64e, built with Xcode)"
+    cp "$BAR_DYLIB" "$B/WiFiTetherBar.dylib"
+else
+    echo "   arm64 only (no BAR_DYLIB)"
+    "$CLANG" "${CFLAGS[@]}" "${LDFLAGS[@]}" -fobjc-arc -dynamiclib \
+        -install_name /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherBar.dylib \
+        src/bar/bar.m -framework UIKit -framework QuartzCore -framework CoreGraphics -framework Foundation -o "$B/WiFiTetherBar.dylib"
+fi
+BAR_ARCHS="$(archs "$B/WiFiTetherBar.dylib")"
+echo "   status bar add-on built for: $BAR_ARCHS"
+echo "$BAR_ARCHS" > "$B/bar-archs.txt"
 
 echo "== Building app"
 "$CLANG" "${CFLAGS[@]}" -fobjc-arc -c src/app/main.m -o "$B/app_main.o"
 "$CLANG" "${CFLAGS[@]}" "${LDFLAGS[@]}" "$B/app_main.o" \
-    -framework UIKit -framework Foundation -o "$B/WiFiTether"
+    -framework UIKit -framework UserNotifications -framework CoreGraphics -framework Foundation -o "$B/WiFiTether"
 
 echo "== Packaging"
 S="$B/stage"
@@ -108,7 +127,7 @@ APP="$S/var/jb/Applications/WiFiTether.app"
 mkdir -p "$S/DEBIAN" "$APP" "$S/var/jb/usr/libexec" "$S/var/jb/Library/LaunchDaemons"
 
 cp "$B/WiFiTether" "$APP/WiFiTether"
-sed "s/@VERSION@/$VERSION/g" src/app/Info.plist > "$APP/Info.plist"
+sed -e "s/@VERSION@/$VERSION/g" -e "s/@BUILD@/$PKGVERSION/g" src/app/Info.plist > "$APP/Info.plist"
 cp src/app/icons/AppIcon*.png "$APP/"
 chmod 644 "$APP"/AppIcon*.png
 cp "$B/wifitetherd" "$S/var/jb/usr/libexec/wifitetherd"
@@ -119,6 +138,7 @@ cp packaging/com.wifitether.vpn.plist "$S/var/jb/Library/LaunchDaemons/"
 TW="$S/var/jb/Library/MobileSubstrate/DynamicLibraries"
 mkdir -p "$TW"
 cp "$B/WiFiTetherRoam.dylib" src/roam/WiFiTetherRoam.plist "$TW/"
+cp "$B/WiFiTetherBar.dylib" src/bar/WiFiTetherBar.plist "$TW/"
 mkdir -p "$S/var/jb/usr/share/doc/com.wifitether"
 cp src/vpn/LICENSE "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.pftun"
 cp src/daemon/LICENSE.AutoHotspot "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.AutoHotspot"
@@ -127,15 +147,17 @@ ldid -Ssrc/app/entitlements.plist "$APP/WiFiTether"
 ldid -Ssrc/daemon/entitlements.plist "$S/var/jb/usr/libexec/wifitetherd"
 ldid -Ssrc/daemon/entitlements.plist "$S/var/jb/usr/libexec/wifitether-vpn"
 ldid -S "$TW/WiFiTetherRoam.dylib"
+ldid -S "$TW/WiFiTetherBar.dylib"
 
 sed "s/@VERSION@/$PKGVERSION/g" packaging/control > "$S/DEBIAN/control"
 cp packaging/postinst packaging/prerm "$S/DEBIAN/"
 
 chmod 755 "$S/DEBIAN/postinst" "$S/DEBIAN/prerm" "$APP/WiFiTether" "$S/var/jb/usr/libexec/wifitetherd" \
-    "$S/var/jb/usr/libexec/wifitether-vpn" "$S/var/jb/usr/libexec/wifitether-vpnid" "$TW/WiFiTetherRoam.dylib"
+    "$S/var/jb/usr/libexec/wifitether-vpn" "$S/var/jb/usr/libexec/wifitether-vpnid" "$TW/WiFiTetherRoam.dylib" \
+    "$TW/WiFiTetherBar.dylib"
 chmod 644 "$S/var/jb/Library/LaunchDaemons/"*.plist "$APP/Info.plist" "$S/DEBIAN/control" \
     "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.pftun" "$S/var/jb/usr/share/doc/com.wifitether/LICENSE.AutoHotspot" \
-    "$TW/WiFiTetherRoam.plist"
+    "$TW/WiFiTetherRoam.plist" "$TW/WiFiTetherBar.plist"
 
 OUT="$B/com.wifitether_${PKGVERSION}_iphoneos-arm64.deb"
 dpkg-deb --root-owner-group -Zgzip -b "$S" "$OUT"

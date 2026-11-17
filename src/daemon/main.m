@@ -1338,6 +1338,9 @@ static double      g_b5OwnUntil;             /* driver events until then come fr
 
 static void b5Tick(void);
 static void b5TickSoon(double seconds);
+static void indNoteBand(int band);   /* status indicators (below): the band just read */
+static void indEventSoon(void);      /* status indicators: the Wi-Fi driver reported a change */
+static int  indWanted(void);
 
 /* If one of these private calls ever crashes the service, it must not take
  * sharing down with it on every restart: a file marks a call in progress, and
@@ -1512,6 +1515,7 @@ static int b5CurrentBand(void)
     if (b5OnWant(band))
         g_b5Rssi = b5Int(cur, CFSTR("RSSI"));
     CFRelease(cur);
+    indNoteBand(band);
     return band;
 }
 
@@ -2408,7 +2412,7 @@ static void b5EventsStart(void)
             if (m->total_size < sizeof(*m) || off + (ssize_t)m->total_size > n)
                 break;
             const char *name = evName(m->event_code);
-            if (name && m->event_code != 10 && m->event_code != 58) {
+            if (name && g_b5Running && m->event_code != 10 && m->event_code != 58) {
                 size_t dl = m->total_size - sizeof(*m);
                 NSLog(@"wifitetherd: events: %s (%u)%s%@", name, m->event_code,
                       dl ? " data " : "", dl ? hexOf(m->data, dl > 48 ? 48 : dl) : @"");
@@ -2418,6 +2422,10 @@ static void b5EventsStart(void)
             switch (m->event_code) {
             case 2: case 3: case 4: case 30: case 32: case 140:
                 b5EventCheck();
+                indEventSoon();
+                break;
+            case 9:
+                indEventSoon();
                 break;
             }
             off += m->total_size;
@@ -2457,7 +2465,8 @@ static void b5Stop(void)
     g_b5Rssi = 0;
     g_b5Band = 0;
     g_b5ScanWaiting = 0;
-    b5EventsStop();
+    if (!indWanted())   /* the status indicators keep listening */
+        b5EventsStop();
     g_b5NextScan5 = 0;
     b5GuardEnd();
 }
@@ -2529,6 +2538,228 @@ static void b5Update(void)
     b5Start();
 }
 
+/* ── Status indicators ───────────────────────────────────────────────────
+ * Two ways to see what's on without opening the app, both in its Settings:
+ *   - The band on the status bar's Wi-Fi icon (src/bar; on by default). The
+ *     band is published on the Darwin notification com.wifitether.band:
+ *     state = (switched on ? 0x100 : 0) | band (2, 5, 6; 0 none).
+ *   - A quiet notification in Notification Centre (off by default): the band
+ *     and what's switched on. Only the app can post notifications, so this
+ *     writes the summary (summary.plist) and, when it changes, starts the app
+ *     in the background to post it (SpringBoardServices, the way the "open"
+ *     command starts apps; com.apple.springboard.launchapplications).
+ * The band is read when the Wi-Fi driver reports a change (the same event
+ * socket the band switches use) and every 30 seconds in case one is missed.
+ * ------------------------------------------------------------------------- */
+#define WT_BANDLABEL   WT_DIR "/band-label"            /* "0": off; otherwise on */
+#define WT_STATUSNOTE  WT_DIR "/status-notification"   /* "1": on */
+#define WT_SUMMARY     WT_DIR "/summary.plist"
+#define WT_BAND_NOTIFY "com.wifitether.band"
+#define WT_APP_ID      "com.wifitether.app"
+
+static int               g_indLabel = -1, g_indNote = -1;   /* the two settings; -1 not read yet */
+static int               g_indBand = -1;                    /* 2, 5, 6; 0 none; -1 not read yet */
+static int               g_indVpn, g_indVpnShared;          /* a VPN is connected / shared */
+static uint64_t          g_indPublished = UINT64_MAX;
+static dispatch_source_t g_indTimer;
+static unsigned          g_indEvGen, g_indWakeGen;
+static NSDictionary     *g_indSummary, *g_indWoke;          /* the summary now / the app was last woken for */
+
+static int indWanted(void)
+{
+    return g_indLabel == 1 || g_indNote == 1;
+}
+
+static void indPublish(void)
+{
+    static int tok = -1;
+    uint64_t st = (g_indLabel == 1 ? 0x100 : 0) | (uint64_t)(g_indBand > 0 ? g_indBand : 0);
+
+    if (st == g_indPublished)
+        return;
+    if (tok < 0 && notify_register_check(WT_BAND_NOTIFY, &tok) != NOTIFY_STATUS_OK) {
+        tok = -1;
+        return;
+    }
+    notify_set_state(tok, st);
+    notify_post(WT_BAND_NOTIFY);
+    g_indPublished = st;
+}
+
+/* Starts the app in the background, so it updates its notification. */
+static void indWakeApp(void)
+{
+    static int (*launch)(CFStringRef, Boolean);
+    static int tried, lastErr;
+    int r;
+
+    if (!tried) {
+        tried = 1;
+        dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_LAZY);
+        launch = dlsym(RTLD_DEFAULT, "SBSLaunchApplicationWithIdentifier");
+        if (!launch)
+            NSLog(@"wifitetherd: status notification: can't start the app in the background on this iOS");
+    }
+    if (!launch)
+        return;
+    r = launch(CFSTR(WT_APP_ID), true);   /* true: in the background (suspended) */
+    if (r && r != lastErr)
+        NSLog(@"wifitetherd: status notification: couldn't start the app to update it (error %d)", r);
+    lastErr = r;
+}
+
+static NSString *indBandName(int band)
+{
+    return band == 2 ? @"2.4 GHz" : band == 5 ? @"5 GHz" : band == 6 ? @"6 GHz" : nil;
+}
+
+/* What the notification says, compactly: the band and the band switch on top,
+ * sharing and VPN underneath. Nothing (show = NO) while neither sharing nor
+ * a band switch is on. */
+static NSDictionary *indSummaryNow(void)
+{
+    NSMutableArray *top = [NSMutableArray array], *bottom = [NSMutableArray array];
+    int sharing = g_lastEnabled == 1;
+    NSString *band = indBandName(g_indBand);
+
+    [top addObject:band ? [band stringByAppendingString:@" Wi-Fi"] : @"Not on Wi-Fi"];
+    if (g_b5Running)
+        [top addObject:g_b5Want == 2 ? @"Force 2.4 GHz on" : @"Force 5 GHz on"];
+    if (!sharing)
+        [bottom addObject:@"USB sharing off"];
+    else if (!g_applied)
+        [bottom addObject:@"USB sharing on, not connected"];
+    else
+        [bottom addObject:g_indVpnShared ? @"Sharing VPN over USB" : @"Sharing Wi-Fi over USB"];
+    if (g_indVpn && !(sharing && g_applied && g_indVpnShared))
+        [bottom addObject:@"VPN on"];
+    return @{ @"show": @(sharing || g_b5Running),
+              @"title": [top componentsJoinedByString:@" · "],
+              @"body": [bottom componentsJoinedByString:@" · "] };
+}
+
+/* After anything that can change the summary: write it, and if it stays
+ * changed for 3 seconds (a router kick moves back within half a second),
+ * wake the app to update the notification. */
+static void indRefresh(void)
+{
+    NSDictionary *now;
+    unsigned gen;
+
+    if (g_indNote != 1)
+        return;
+    now = indSummaryNow();
+    if ([now isEqualToDictionary:g_indSummary])
+        return;
+    g_indSummary = now;
+    ensureDir();
+    [now writeToFile:@WT_SUMMARY atomically:YES];
+    chown(WT_SUMMARY, MOBILE_UID, MOBILE_UID);
+    chmod(WT_SUMMARY, 0644);
+    gen = ++g_indWakeGen;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (gen != g_indWakeGen || g_indNote != 1 || [g_indSummary isEqualToDictionary:g_indWoke])
+            return;
+        g_indWoke = g_indSummary;
+        indWakeApp();
+    });
+}
+
+static int indReadBand(void)
+{
+    CFArrayRef devs;
+    void *cur = NULL;
+    int band = 0;
+
+    if (!b5Init())
+        return 0;
+    devs = B5.copyDevices(B5.mgr);
+    if (devs && CFArrayGetCount(devs) > 0)
+        cur = B5.copyCurrent((void *)CFArrayGetValueAtIndex(devs, 0));
+    if (devs)
+        CFRelease(devs);
+    if (cur) {
+        band = b5Band(cur);
+        CFRelease(cur);
+    }
+    return band;
+}
+
+static void indNoteBand(int band)
+{
+    if (band < 0)
+        band = 0;
+    if (band == g_indBand)
+        return;
+    g_indBand = band;
+    indPublish();
+    indRefresh();
+}
+
+static void indCheck(void)
+{
+    if (!indWanted())
+        return;
+    if (g_lastEnabled != 1) {   /* sharing off: reconcile isn't watching the VPN */
+        WTIf up = findIf(0);
+        g_indVpn = up.ok && findVPN(&up).ok;
+        g_indVpnShared = 0;
+    }
+    indNoteBand(indReadBand());
+    indRefresh();
+}
+
+/* The Wi-Fi driver reported a change: iOS's view of the connection takes a
+ * moment to catch up, so look at 0.3, 1 and 3 seconds (a burst counts once). */
+static void indEventSoon(void)
+{
+    static const int64_t at[] = {300, 1000, 3000};
+    unsigned gen;
+
+    if (!indWanted())
+        return;
+    gen = ++g_indEvGen;
+    for (int i = 0; i < 3; i++)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, at[i] * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            if (gen == g_indEvGen)
+                indCheck();
+        });
+}
+
+/* The settings (from reconcile, which runs whenever the app changes one). */
+static void indUpdate(void)
+{
+    char c = 0;
+    FILE *f = fopen(WT_BANDLABEL, "r");
+    int label, note = b5ReadFlag(WT_STATUSNOTE);
+
+    if (f) {
+        if (fread(&c, 1, 1, f) != 1)
+            c = 0;
+        fclose(f);
+    }
+    label = c != '0';
+    if (label == g_indLabel && note == g_indNote)
+        return;
+    NSLog(@"wifitetherd: band on the Wi-Fi icon: %s; status notification: %s", label ? "on" : "off", note ? "on" : "off");
+    g_indLabel = label;
+    g_indNote = note;
+    if (!g_indTimer) {
+        g_indTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(g_indTimer, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC),
+                                  30 * NSEC_PER_SEC, 5 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(g_indTimer, ^{ indCheck(); });
+        dispatch_resume(g_indTimer);
+    }
+    if (indWanted())
+        b5EventsStart();
+    else if (!g_b5Running)
+        b5EventsStop();
+    g_indSummary = g_indWoke = nil;   /* write the summary afresh */
+    indPublish();
+    indCheck();
+}
+
 static void writeStatus(NSDictionary *d)
 {
     ensureDir();
@@ -2545,6 +2776,7 @@ static void reconcile(void)
         int share = shareInstalled();
 
         b5Update();
+        indUpdate();
         static int lastShare = -1;
 
         /* Share just got installed: restart iOS's hotspot service so Share's
@@ -2653,9 +2885,11 @@ static void reconcile(void)
             if (g_applied)
                 teardown(stopReason(en, &up, &lan));
             writeVpnIf("");
+            g_indVpn = g_indVpnShared = 0;
             if (up.ok) {   /* the app shows a connected VPN even while it isn't shared */
                 WTIf v = findVPN(&up);
                 st[@"vpn"] = v.ok ? [NSString stringWithFormat:@"%s (%@)", v.name, ipStr(v.ip)] : @"";
+                g_indVpn = v.ok;
             }
             if (!en)
                 state = share ? @"off" : @"noshare";
@@ -2746,6 +2980,8 @@ static void reconcile(void)
                 }
             }
             st[@"vpnShared"] = @(vpn.ok && pfn_vpn_shared());
+            g_indVpn = vpn.ok;
+            g_indVpnShared = vpn.ok && pfn_vpn_shared();
 
             state = ok ? @"active" : @"error";
             if (!ok) {
@@ -2782,6 +3018,7 @@ static void reconcile(void)
             st[@"band5rssi"] = @(g_b5Rssi);
         st[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
         writeStatus(st);
+        indRefresh();
 
         /* Switch off: stop the 1-second check, so nothing wakes up until the
          * switch changes (the app posts WT_NOTIFY). */

@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.6
+
+**See what's on without opening the app**
+
+- **Band on the Wi-Fi icon:** a small **5**, **2.4** or **6** (6 GHz) in the corner of the
+  status bar's Wi-Fi icon, in amber with a thin dark outline, in every app. It shows the
+  band Wi-Fi is actually on, not what the switches are set to. On by default. Respring
+  once after installing for it to appear.
+- **Status notification** (optional): one quiet notification in Notification Centre with
+  the band and what's switched on, for example *5 GHz Wi-Fi · Force 5 GHz on* and *Sharing
+  VPN over USB*. No sound or banner; it updates by itself and only shows while sharing or a
+  band switch is on.
+
+**App**
+
+- **Menu** (☰, top left) that slides out, with **Settings** (the two options above) and
+  **About** (short instructions, a link to GitHub, version, build and developer).
+- **Share or copy the log** from Settings: as a .txt file (AirDrop, Save to Files, Mail…)
+  or onto the clipboard, with the version and device on top. No more Filza for that.
+
 ## 1.5
 
 **USB tethering**

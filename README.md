@@ -48,6 +48,18 @@ like a captive portal you've already signed in to on the phone.
   moves it back at once, usually without Wi-Fi dropping at all.
 - **Doesn't need tethering or the Share tweak.**
 
+**See it at a glance**
+
+- **Band on the Wi-Fi icon.** A small **5**, **2.4** or **6** in the corner of the status
+  bar's Wi-Fi icon, in every app: the band it's actually on, whatever the switches say. On
+  by default; switch it off in Settings.
+- **Status notification.** An optional quiet notification in Notification Centre with the
+  band and what's switched on, for example *5 GHz Wi-Fi · Force 5 GHz on* and *Sharing VPN
+  over USB*. No sound or banner, and it updates by itself.
+
+Both are in the app's menu (☰, top left) under **Settings**, which can also share or copy
+the log for a problem report. **About** has short instructions and the version.
+
 Both are **free and open source** (MIT).
 
 > **Beta.** Should work on any iPhone or iPad with a rootless jailbreak on iOS 15 or later,
@@ -134,6 +146,10 @@ seconds), or *Connected* while sharing is off.
 The line under the switches says what it's doing, for example *On 5 GHz (−75 dBm)*. It
 keeps working in the background, with sharing on or off, until you turn the switch off.
 Turn it off to let the router choose again.
+
+The band also shows on the Wi-Fi icon at the top of the screen (respring once after
+installing for it to appear), and in the status notification if you turn that on in
+**Settings**.
 
 The first switch after the device has been sitting on the other band for a while can take
 a few seconds while it finds the band. After that, moves are near-instant.
@@ -242,8 +258,20 @@ Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
 - **Slower or less stable on 5 GHz.** Where the 5 GHz signal is weak, 2.4 GHz can be the
   better choice; try Force 2.4 GHz.
 
-**Log and status files** are in `/var/mobile/Library/WiFiTether/` (`daemon.log`,
-`vpn.log` and `status.plist`). Attach them to an issue if something goes wrong.
+**Band on the Wi-Fi icon and status notification**
+
+- **No number on the Wi-Fi icon.** Respring once after installing or updating: apps and
+  the home screen pick the add-on up when they start. Check it's on in **Settings**.
+- **An app or game says it's jailbroken, or misbehaves.** The Wi-Fi icon add-on loads into
+  every app. Switching it off in Settings stops it drawing anything, but it still loads;
+  to keep it out of one app, use a tweak like Choicy.
+- **No status notification.** Allow notifications for **Tether & Band** in Settings →
+  Notifications. It only shows while sharing or a band switch is on. If you clear it, it
+  comes back at the next change.
+
+**The log:** in the app, **☰ → Settings → Share log file…** (AirDrop, Save to Files, Mail…)
+or **Copy log**. Attach it to an issue if something goes wrong. The files themselves are in
+`/var/mobile/Library/WiFiTether/` (`daemon.log`, `vpn.log` and `status.plist`).
 `daemon.log` stays under 1 MB; the part before that is kept in `daemon.log.old`.
 
 ## How it works
@@ -300,6 +328,20 @@ root) fills that gap whenever sharing is on:
    and older, and arm64e (with pointer authentication) for A12 and newer. If iOS's Wi-Fi
    service restarts straight after a hand-over request, the app stops asking for
    hand-overs until the switch is turned off and on.
+
+7. **Band on the Wi-Fi icon.** Since iOS 13 every app draws its own status bar, so a
+   small add-on (`src/bar`) loads into every app that uses UIKit, SpringBoard included.
+   It keeps iOS's own icon as it is and adds one layer on top of
+   `_UIStatusBarWifiSignalView` (its only hook is that view's `layoutSubviews`), plus a
+   mask that cuts the small gap round the text. If that view isn't there on some iOS
+   version, it does nothing. `wifitetherd` publishes the band on the Darwin notification
+   `com.wifitether.band`, so switching it off in Settings takes it away everywhere at once.
+   Like the hand-over add-on, it's built for arm64 and arm64e.
+8. **Status notification.** Only the app can post notifications, so `wifitetherd` writes
+   a short summary (`summary.plist`) and, when it changes for 3 seconds, starts the app in
+   the background (`SBSLaunchApplicationWithIdentifier`, as the `open` command does). The
+   app replaces its one notification in place (passive interruption level: no sound, no
+   banner) and quits, so the next change starts it afresh.
 
 Everything is removed again when you turn sharing off or uninstall.
 

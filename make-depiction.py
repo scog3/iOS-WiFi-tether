@@ -44,6 +44,8 @@ details = (
     "Works on its own, without tethering or Share. Moving back is near-instant, with no "
     "disconnect, on iPhone X and older (A11 chip or older, iPads too). On newer devices that's new "
     "and untested; if it doesn't work there, Wi-Fi drops for about half a second each time.\n"
+    "- **See it at a glance.** The band shows as a small 5 or 2.4 on the Wi-Fi icon in every app "
+    "(respring once after installing), and an optional quiet notification says what's on.\n"
     "- **No battery drain when it's off.**\n"
     "- **Free and open source** (MIT).\n\n"
     "USB tethering needs the **Share** tweak (the app has a button that adds its repo in Sileo); "

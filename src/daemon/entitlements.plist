@@ -20,6 +20,9 @@
     <array>
         <string>apple</string>
     </array>
+    <!-- Status notification: start the app in the background to update it -->
+    <key>com.apple.springboard.launchapplications</key>
+    <true/>
     <!-- Airplane mode (RadiosPreferences writes com.apple.radios.plist) -->
     <key>com.apple.SystemConfiguration.SCPreferences-write-access</key>
     <array>

@@ -39,4 +39,10 @@ if [ -f /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherRoam.dylib ];
     killall -9 wifid >/dev/null 2>&1 || true
 fi
 
+# The band on the Wi-Fi icon (src/bar) loads into apps as they start; the home
+# screen and apps already open pick it up after a respring.
+if [ -f /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherBar.dylib ]; then
+    echo "Respring once so the band shows on the Wi-Fi icon (it can be switched off in the app's Settings)."
+fi
+
 exit 0
