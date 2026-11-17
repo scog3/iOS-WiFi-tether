@@ -1,26 +1,32 @@
 /*
- * WiFiTetherBar: the Wi-Fi band on the status bar's Wi-Fi icon ("2.4", "5",
- * "6"), centred over the icon. "2.4" is as wide as the icon's top arc (tip to
- * tip); "5" and "6" are bigger, most of the icon's height. The colours follow
- * the status bar's own: where its icons are white (dark bars, wallpapers, the
- * blue, green and red bars), yellow with a black outline; where they're black
- * (light bars), violet with a white outline. A small gap is cut round the
- * text so the arcs stay readable.
+ * WiFiTetherBar: the status bar's Wi-Fi icon shows the band. In the same box
+ * as iOS's own icon: three thin arcs for the signal (iOS's own level, solid
+ * or dimmed the way iOS dims weak bars) over the band's number, "2.4", "5"
+ * or "6", as big as fits. It's drawn in the icon's own colour, so it follows
+ * the status bar (white, black, on the blue or green bars...) like the icon
+ * it replaces. It stays inside the icon's box, so it can't overlap anything
+ * next to it, and needs no extra room on any iPhone.
  *
  * Since iOS 13 every app draws its own status bar, so this add-on loads into
  * every app that uses UIKit (and SpringBoard, for the home and lock screens).
- * It keeps iOS's own icon as it is and adds one layer on top of it, plus a
- * mask for the gap. It touches nothing else:
- *   - two methods of _UIStatusBarWifiSignalView: layoutSubviews and
- *     applyStyleAttributes: (the status bar's colours changed), which still
- *     run as before; after them, the label is added or updated;
+ * How: one layer in the icon's colour on top of iOS's own drawing, and a mask
+ * on the icon in the new shape (solid where the shape is, dimmed for weak
+ * bars, clear elsewhere), so what shows is exactly the new icon. It touches
+ * only _UIStatusBarWifiSignalView, three methods that still run as before:
+ *   - layoutSubviews (size), applyStyleAttributes: (colours), and
+ *     setNumberOfActiveBars: (signal); after them the icon is updated;
  *   - if that class or layoutSubviews isn't there (another iOS version), it
- *     does nothing at all.
+ *     does nothing at all; without the other two, it updates at the next
+ *     layout instead.
+ * Not on Wi-Fi, band unknown, or switched off in the app: iOS's own icon.
+ *
+ * In SpringBoard it also makes iOS's own blue "Personal Hotspot" indicator
+ * show while the computer is connected (hotspot.m).
  *
  * The band comes from wifitetherd, on the Darwin notification
- * com.wifitether.band: state = (label switched on ? 0x100 : 0) | band, with
- * band 2 (2.4 GHz), 5, 6, or 0 (none / not on Wi-Fi). Turning the label off
- * in the app's settings removes it everywhere at once.
+ * com.wifitether.band: state = (switched on ? 0x100 : 0) | band, with band 2
+ * (2.4 GHz), 5, 6, or 0 (none / not on Wi-Fi). Switching it off in the app's
+ * settings puts iOS's icon back everywhere at once.
  */
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
@@ -33,7 +39,8 @@
 
 static Class        g_cls;
 static IMP          g_origLayout;        /* the class's own layoutSubviews, if it has one */
-static IMP          g_origStyle;         /* and applyStyleAttributes: */
+static IMP          g_origStyle;         /* applyStyleAttributes: */
+static IMP          g_origBars;          /* setNumberOfActiveBars: */
 static int          g_band;              /* 0 none, 2, 5, 6 */
 static int          g_show;              /* the label is switched on in the app */
 static NSHashTable *g_views;             /* the Wi-Fi icons seen, to update when the band changes */
@@ -84,38 +91,95 @@ static CGRect wtInk(NSString *text, UIFont *font)
     return r;
 }
 
-/* "2.4": as wide as the icon. "5" and "6": digits 86% of the icon's height
- * (no wider than the icon). */
-static UIFont *wtFont(NSString *text, CGSize icon)
+static id wtGet(UIView *v, NSString *name)
 {
+    SEL s = NSSelectorFromString(name);
+    return [v respondsToSelector:s] ? ((id (*)(id, SEL))objc_msgSend)(v, s) : nil;
+}
+
+/* iOS's signal level for the icon: 0-3. */
+static int wtBars(UIView *v)
+{
+    SEL s = NSSelectorFromString(@"numberOfActiveBars");
+    Method m = class_getInstanceMethod(object_getClass(v), s);
+    char t[8] = "";
+    long long n = 3;
+    if (m) {
+        method_getReturnType(m, t, sizeof(t));
+        if (t[0] && strchr("iI", t[0]))
+            n = ((int (*)(id, SEL))objc_msgSend)(v, s);
+        else if (t[0] && strchr("qQlL", t[0]))
+            n = ((long long (*)(id, SEL))objc_msgSend)(v, s);
+    }
+    return (int)MAX(0, MIN(3, n));
+}
+
+/* The icon's colour (opaque), and how strong its full and dimmed parts are. */
+static UIColor *wtColors(UIView *v, CGFloat *full, CGFloat *dim)
+{
+    UIColor *on = wtGet(v, @"activeColor"), *off = wtGet(v, @"inactiveColor");
+    CGFloat r = 1, g = 1, b = 1, a = 1, w, oa = 0;
+    if (![on isKindOfClass:[UIColor class]])
+        on = v.tintColor ?: UIColor.whiteColor;
+    if (![on getRed:&r green:&g blue:&b alpha:&a] && [on getWhite:&w alpha:&a])
+        r = g = b = w;
+    if ([off isKindOfClass:[UIColor class]] && !([off getRed:&w green:&w blue:&w alpha:&oa] || [off getWhite:&w alpha:&oa]))
+        oa = 0;
+    *full = a > 0.05 ? a : 1;
+    /* iOS dims weak bars by making them see-through; if its dim colour is
+     * solid, use iOS's usual strength */
+    *dim = (oa > 0.02 && oa < 0.99) ? MIN(1, oa / *full) : 0.3;
+    return [UIColor colorWithRed:r green:g blue:b alpha:1];
+}
+
+/* One arc of the fan: a ring segment 45 degrees either side of straight up. */
+static UIBezierPath *wtArc(CGPoint c, CGFloat r0, CGFloat r1)
+{
+    UIBezierPath *p = [UIBezierPath bezierPathWithArcCenter:c radius:r1 startAngle:-3 * M_PI_4 endAngle:-M_PI_4 clockwise:YES];
+    [p addArcWithCenter:c radius:r0 startAngle:-M_PI_4 endAngle:-3 * M_PI_4 clockwise:NO];
+    [p closePath];
+    return p;
+}
+
+/* The new icon's shape in box (points), drawn in black at the strength of
+ * each part: the number solid, arcs solid up to the signal level and dimmed
+ * above it. Proportions of the box, so it scales with the icon:
+ *   number: digits 55% of the height, sitting on the bottom (no wider than
+ *           92% of the box);
+ *   arcs:   each 8.5% of the height thick, 5% apart, the outer one as wide
+ *           as the box (its tips 0.2 pt in from the sides) and touching the
+ *           top; cut off 7% of the height above the number, so they never
+ *           touch it. */
+static void wtDrawShape(CGRect box, NSString *text, int bars, CGFloat full, CGFloat dim)
+{
+    CGFloat w = box.size.width, h = box.size.height;
     UIFont *ref = [UIFont systemFontOfSize:10 weight:UIFontWeightBold];
-    CGFloat byWidth = 10 * icon.width / wtInk(text, ref).size.width;
-    CGFloat size = byWidth;
-    if (text.length == 1)
-        size = MIN(byWidth, 10 * icon.height * 0.86 / ref.capHeight);
-    size = MIN(size, 10 * icon.height / ref.capHeight);   /* digits no taller than the icon */
-    return [UIFont systemFontOfSize:MAX(5.0, round(size * 4) / 4) weight:UIFontWeightBold];
+    CGFloat size = MIN(10 * h * 0.55 / ref.capHeight, 10 * w * 0.92 / wtInk(@"2.4", ref).size.width);
+    UIFont *font = [UIFont systemFontOfSize:round(size * 4) / 4 weight:UIFontWeightBold];
+    CGFloat base = CGRectGetMaxY(box) - MAX(0.15, h * 0.014);
+    CGFloat textTop = base - font.capHeight;
+    CGRect ink = wtInk(text, font);
+
+    CGFloat t = h * 0.085, g = h * 0.05;
+    CGFloat R = (w / 2 - 0.2) / sin(M_PI_4);
+    CGPoint c = CGPointMake(CGRectGetMidX(box), CGRectGetMinY(box) + MAX(0.1, h * 0.01) + R);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    CGContextSaveGState(ctx);
+    CGContextClipToRect(ctx, CGRectMake(CGRectGetMinX(box) - 2, CGRectGetMinY(box) - 2, w + 4,
+                                        textTop - h * 0.07 - CGRectGetMinY(box) + 2));
+    for (int i = 0; i < 3; i++) {   /* inner arc first: it's the first bar */
+        CGFloat outer = R - (2 - i) * (t + g);
+        [[UIColor colorWithWhite:0 alpha:(i < bars ? full : full * dim)] setFill];
+        [wtArc(c, outer - t, outer) fill];
+    }
+    CGContextRestoreGState(ctx);
+
+    [text drawAtPoint:CGPointMake(CGRectGetMidX(box) - (ink.origin.x + ink.size.width / 2), base - font.ascender)
+       withAttributes:@{ NSFontAttributeName: font,
+                         NSForegroundColorAttributeName: [UIColor colorWithWhite:0 alpha:full] }];
 }
 
-/* Are the status bar's icons white (dark or coloured bar) or black (light
- * bar)? From the Wi-Fi icon's own colour. */
-static BOOL wtLightIcons(UIView *v)
-{
-    UIColor *c = nil;
-    CGFloat r, g, b, a, white;
-    SEL active = NSSelectorFromString(@"activeColor");   /* _UIStatusBarSignalView's bar colour */
-    if ([v respondsToSelector:active])
-        c = ((UIColor * (*)(id, SEL))objc_msgSend)(v, active);
-    if (![c isKindOfClass:[UIColor class]])
-        c = v.tintColor;
-    if ([c getRed:&r green:&g blue:&b alpha:&a])
-        return 0.299 * r + 0.587 * g + 0.114 * b > 0.5;
-    if ([c getWhite:&white alpha:&a])
-        return white > 0.5;
-    return YES;
-}
-
-/* Draws the label (and the mask that cuts the gap) for this icon's size. */
+/* Puts the new icon on v (or iOS's back). */
 static void wtApply(UIView *v)
 {
     NSString *text = wtText();
@@ -130,58 +194,11 @@ static void wtApply(UIView *v)
         return;
     }
     CGFloat scale = v.window.screen.scale > 0 ? v.window.screen.scale : UIScreen.mainScreen.scale;
-    BOOL light = wtLightIcons(v);
-    NSString *key = [NSString stringWithFormat:@"%@|%.2f|%.2f|%.1f|%d", text, b.size.width, b.size.height, scale, light];
-    if ([objc_getAssociatedObject(v, kWTKey) isEqualToString:key] && wtOverlay(v))
-        return;
-
-    /* Centred on the icon, digits halfway up it. White icons: yellow, black
-     * outline. Black icons: violet, white outline. */
-    UIFont *font = wtFont(text, b.size);
-    UIColor *textColor = light ? [UIColor colorWithRed:1.0 green:0.839 blue:0.039 alpha:1.0]
-                               : [UIColor colorWithRed:0.427 green:0.157 blue:0.851 alpha:1.0];
-    UIColor *lineColor = light ? UIColor.blackColor : UIColor.whiteColor;
-    NSDictionary *fill = @{ NSFontAttributeName: font, NSForegroundColorAttributeName: textColor };
-    CGRect ink = wtInk(text, font);
-    CGFloat pad = 4;   /* the mask reaches a little past the icon, so nothing of it gets clipped */
+    CGFloat full, dim;
+    UIColor *color = wtColors(v, &full, &dim);
+    int bars = wtBars(v);
+    CGFloat pad = 1;   /* a little room so edge pixels aren't cut */
     CGRect area = CGRectInset(b, -pad, -pad);
-    CGFloat baseline = pad + b.size.height / 2 + font.capHeight / 2;
-    CGPoint at = CGPointMake(pad + b.size.width / 2 - (ink.origin.x + ink.size.width / 2), baseline - font.ascender);
-    /* How far the outline, and the gap cut in the arcs, reach past the letters
-     * (points), as stroke widths: % of the font size, and a stroke is centred
-     * on the letters' edges, so half of it is outside. */
-    NSNumber *outline = @(100 * 2 * 0.4 / font.pointSize), *gap = @(100 * 2 * 0.65 / font.pointSize);
-
-    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat preferredFormat];
-    fmt.scale = scale;
-    fmt.opaque = NO;
-    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:area.size format:fmt];
-
-    /* The text with its outline. */
-    UIImage *label = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
-        [text drawAtPoint:at withAttributes:@{ NSFontAttributeName: font,
-                                               NSForegroundColorAttributeName: UIColor.clearColor,
-                                               NSStrokeColorAttributeName: lineColor,
-                                               NSStrokeWidthAttributeName: outline }];
-        [text drawAtPoint:at withAttributes:fill];
-    }];
-    /* The mask: everything shows except a thin ring round the text. */
-    UIImage *mask = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
-        [UIColor.blackColor setFill];
-        UIRectFill(CGRectMake(0, 0, area.size.width, area.size.height));
-        CGContextSetBlendMode(ctx.CGContext, kCGBlendModeClear);
-        [text drawAtPoint:at withAttributes:@{ NSFontAttributeName: font, NSForegroundColorAttributeName: UIColor.blackColor,
-                                               NSStrokeColorAttributeName: UIColor.blackColor,
-                                               NSStrokeWidthAttributeName: @(-gap.doubleValue) }];
-        CGContextSetBlendMode(ctx.CGContext, kCGBlendModeNormal);
-        [text drawAtPoint:at withAttributes:@{ NSFontAttributeName: font, NSForegroundColorAttributeName: UIColor.blackColor,
-                                               NSStrokeColorAttributeName: UIColor.blackColor,
-                                               NSStrokeWidthAttributeName: @(-outline.doubleValue) }];
-    }];
-    if (!label.CGImage || !mask.CGImage) {
-        wtRemove(v);
-        return;
-    }
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -193,8 +210,27 @@ static void wtApply(UIView *v)
         [v.layer addSublayer:o];
     }
     o.frame = area;
-    o.contentsScale = scale;
-    o.contents = (__bridge id)label.CGImage;
+    o.backgroundColor = color.CGColor;   /* the shape comes from the mask */
+    [CATransaction commit];
+
+    NSString *key = [NSString stringWithFormat:@"%@|%.2f|%.2f|%.1f|%d|%.2f|%.2f", text, b.size.width,
+                                               b.size.height, scale, bars, full, dim];
+    if ([objc_getAssociatedObject(v, kWTKey) isEqualToString:key] && [v.layer.mask.name isEqualToString:kWTName])
+        return;
+
+    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat preferredFormat];
+    fmt.scale = scale;
+    fmt.opaque = NO;
+    UIImage *mask = [[[UIGraphicsImageRenderer alloc] initWithSize:area.size format:fmt]
+        imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+            wtDrawShape(CGRectMake(pad, pad, b.size.width, b.size.height), text, bars, full, dim);
+        }];
+    if (!mask.CGImage) {
+        wtRemove(v);
+        return;
+    }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     CALayer *m = [CALayer layer];
     m.name = kWTName;
     m.frame = area;
@@ -222,7 +258,7 @@ static void wtLayout(UIView *self, SEL _cmd)
 }
 
 /* The status bar's colours changed (light bar to dark, a blue or green bar
- * appeared...): redraw in the matching colours. */
+ * appeared...): follow them. */
 static void wtStyle(UIView *self, SEL _cmd, id attrs)
 {
     if (g_origStyle) {
@@ -230,6 +266,22 @@ static void wtStyle(UIView *self, SEL _cmd, id attrs)
     } else {
         struct objc_super sup = { self, class_getSuperclass(g_cls) };
         ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&sup, _cmd, attrs);
+    }
+    @try {
+        if ([g_views containsObject:self])
+            wtApply(self);
+    } @catch (NSException *e) {
+    }
+}
+
+/* The signal level changed. */
+static void wtSetBars(UIView *self, SEL _cmd, long long n)
+{
+    if (g_origBars) {
+        ((void (*)(UIView *, SEL, long long))g_origBars)(self, _cmd, n);
+    } else {
+        struct objc_super sup = { self, class_getSuperclass(g_cls) };
+        ((void (*)(struct objc_super *, SEL, long long))objc_msgSendSuper)(&sup, _cmd, n);
     }
     @try {
         if ([g_views containsObject:self])
@@ -253,9 +305,9 @@ static void wtSetState(uint64_t st)
     }
 }
 
-/* Temporary, for the 1.6 test builds: why iOS's blue hotspot indicator
- * doesn't show (see diag.m). */
-#include "diag.m"
+/* iOS's blue "Personal Hotspot" indicator while the computer is connected
+ * (SpringBoard only; see hotspot.m). */
+#include "hotspot.m"
 
 __attribute__((constructor)) static void wtBarInit(void)
 {
@@ -265,7 +317,7 @@ __attribute__((constructor)) static void wtBarInit(void)
     uint64_t st = 0;
 
     @try {
-        wtDiagStart();
+        wtHotspotStart();
     } @catch (NSException *e) {
     }
     g_cls = objc_getClass("_UIStatusBarWifiSignalView");
@@ -295,5 +347,18 @@ __attribute__((constructor)) static void wtBarInit(void)
             g_origStyle = NULL;
         else
             g_origStyle = method_setImplementation(m, (IMP)wtStyle);
+    }
+
+    /* Signal changes (only if it takes a 64-bit number, as expected). */
+    sel = NSSelectorFromString(@"setNumberOfActiveBars:");
+    char arg[8] = "";
+    if ((m = class_getInstanceMethod(g_cls, sel)) && method_getNumberOfArguments(m) == 3) {
+        method_getArgumentType(m, 2, arg, sizeof(arg));
+        if (arg[0] && strchr("qQlL", arg[0])) {
+            if (class_addMethod(g_cls, sel, (IMP)wtSetBars, method_getTypeEncoding(m)))
+                g_origBars = NULL;
+            else
+                g_origBars = method_setImplementation(m, (IMP)wtSetBars);
+        }
     }
 }

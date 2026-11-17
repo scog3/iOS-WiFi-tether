@@ -4,15 +4,19 @@
 
 **See what's on without opening the app**
 
-- **Band on the Wi-Fi icon:** **2.4**, **5** or **6** (6 GHz) over the status bar's Wi-Fi
-  icon (2.4 as wide as the icon, 5 and 6 bigger), in every app. The colours follow the
-  status bar: yellow with a black outline where its icons are white, violet with a white
-  outline where they're black. It shows the band Wi-Fi is actually on, not what the
-  switches are set to. On by default. Respring once after installing for it to appear.
-- **Status notification** (optional): one quiet notification in Notification Centre with
-  the band and what's switched on, for example *5 GHz Wi-Fi · Force 5 GHz on* and *Sharing
-  VPN over USB*. No sound or banner; it updates by itself and only shows while sharing or a
-  band switch is on.
+- **Band on the Wi-Fi icon:** the status bar's Wi-Fi icon becomes three arcs for the signal
+  over the band's number, **2.4**, **5** or **6** (6 GHz), in every app. It's drawn in the
+  icon's own colour and fits in the same space, so it looks at home on any status bar and
+  any iPhone. It shows the band Wi-Fi is actually on, not what the switches are set to. On
+  by default. Respring once after installing for it to appear.
+- **iOS's blue Personal Hotspot indicator** now shows while the computer is connected, as
+  it does when sharing mobile data. iOS only takes it from the phone's cellular service,
+  which never says it's sharing when the hotspot shares Wi-Fi. Respring once after
+  installing.
+- **Status notification** (optional): one quiet notification in Notification Centre with a
+  short summary: *Wi-Fi: 5 GHz*, then *USB sharing*, *VPN pass-through* and *Band lock*,
+  each on or off. Always the same lines, so nothing jumps around. No sound or banner; it
+  updates by itself.
 
 **App**
 

@@ -50,12 +50,15 @@ like a captive portal you've already signed in to on the phone.
 
 **See it at a glance**
 
-- **Band on the Wi-Fi icon.** **2.4**, **5** or **6** over the status bar's Wi-Fi
-  icon, in every app: the band it's actually on, whatever the switches say. On
-  by default; switch it off in Settings.
-- **Status notification.** An optional quiet notification in Notification Centre with the
-  band and what's switched on, for example *5 GHz Wi-Fi · Force 5 GHz on* and *Sharing VPN
-  over USB*. No sound or banner, and it updates by itself.
+- **Band on the Wi-Fi icon.** The status bar's Wi-Fi icon shows three arcs for the
+  signal over **2.4**, **5** or **6**, in every app: the band it's actually on, whatever
+  the switches say. Same colour and size as iOS's icon. On by default; switch it off in
+  Settings.
+- **Blue Personal Hotspot indicator.** iOS's own, while the computer is connected, as when
+  sharing mobile data.
+- **Status notification.** An optional quiet notification in Notification Centre:
+  *Wi-Fi: 5 GHz*, then *USB sharing*, *VPN pass-through* and *Band lock*, each on or off.
+  No sound or banner, and it updates by itself.
 
 Both are in the app's menu (☰ top right, or swipe in from the right edge) under **Settings**, which can also share or copy
 the log for a problem report. **About** has short instructions and the version.
@@ -267,9 +270,8 @@ Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
   to keep it out of one app, use a tweak like Choicy.
 - **No status notification.** Allow notifications for **Tether & Band** in Settings →
   Notifications. If it isn't in that list, respring; if it's still missing, reboot
-  userspace in your jailbreak app (Dopamine: Reboot Userspace). It only shows while sharing
-  or a band switch is on. If you clear it, it
-  comes back at the next change.
+  userspace in your jailbreak app (Dopamine: Reboot Userspace). If you clear it, it comes
+  back at the next change.
 
 **The log:** in the app, **☰ → Settings → Share log file…** (AirDrop, Save to Files, Mail…)
 or **Copy log**. Attach it to an issue if something goes wrong. The files themselves are in
@@ -333,13 +335,20 @@ root) fills that gap whenever sharing is on:
 
 7. **Band on the Wi-Fi icon.** Since iOS 13 every app draws its own status bar, so a
    small add-on (`src/bar`) loads into every app that uses UIKit, SpringBoard included.
-   It keeps iOS's own icon as it is and adds one layer on top of
-   `_UIStatusBarWifiSignalView` (its only hooks are that view's `layoutSubviews` and
-   `applyStyleAttributes:`, for when the status bar's colours change), plus a mask that
-   cuts the small gap round the text. Its colours follow the icon's: yellow with a black
-   outline on white icons, violet with a white outline on black ones. If that view isn't there on some iOS
-   version, it does nothing. `wifitetherd` publishes the band on the Darwin notification
+   On `_UIStatusBarWifiSignalView` it adds one layer in the icon's own colour on top of
+   iOS's drawing, and a mask in the new shape (three arcs over the number; solid, dimmed
+   for weak bars the way iOS dims them, clear elsewhere), so what shows is exactly the new
+   icon, inside the old one's box. Its only hooks are that view's `layoutSubviews`,
+   `applyStyleAttributes:` (colours) and `setNumberOfActiveBars:` (signal), which still
+   run as before. If that view isn't there on some iOS version, it does nothing. `wifitetherd` publishes the band on the Darwin notification
    `com.wifitether.band`, so switching it off in Settings takes it away everywhere at once.
+   In SpringBoard the same add-on makes iOS's blue Personal Hotspot indicator show
+   (`src/bar/hotspot.m`). SpringBoard takes the tethering state from the cellular
+   service (`-[SBTelephonyManager _setIsNetworkTethering:withNumberOfDevices:]`), which
+   never says it's tethering when the hotspot shares Wi-Fi. `wifitetherd` posts the
+   hotspot service's connection count (`com.wifitether.hotspot`), and the add-on merges
+   it into that state, then asks the status bar to update. What it did goes in
+   `springboard.log`.
    Like the hand-over add-on, it's built for arm64 and arm64e.
 8. **Status notification.** Only the app can post notifications, so `wifitetherd` writes
    a short summary (`summary.plist`) and, when it changes for 3 seconds, starts the app in

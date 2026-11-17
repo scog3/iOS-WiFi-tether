@@ -2613,29 +2613,27 @@ static NSString *indBandName(int band)
     return band == 2 ? @"2.4 GHz" : band == 5 ? @"5 GHz" : band == 6 ? @"6 GHz" : nil;
 }
 
-/* What the notification says, compactly: the band and the band switch on top,
- * sharing and VPN underneath. Nothing (show = NO) while neither sharing nor
- * a band switch is on. */
+/* What the notification says: the band on top, then the same three lines
+ * every time (only their values change), so nothing appears or disappears:
+ *   Wi-Fi: 5 GHz
+ *   USB sharing: on, computer connected
+ *   VPN pass-through: off (no VPN)
+ *   Band lock: Force 5 GHz
+ * Shown whenever the notification is switched on. */
 static NSDictionary *indSummaryNow(void)
 {
-    NSMutableArray *top = [NSMutableArray array], *bottom = [NSMutableArray array];
     int sharing = g_lastEnabled == 1;
     NSString *band = indBandName(g_indBand);
-
-    [top addObject:band ? [band stringByAppendingString:@" Wi-Fi"] : @"Not on Wi-Fi"];
-    if (g_b5Running)
-        [top addObject:g_b5Want == 2 ? @"Force 2.4 GHz on" : @"Force 5 GHz on"];
-    if (!sharing)
-        [bottom addObject:@"USB sharing off"];
-    else if (!g_applied)
-        [bottom addObject:@"USB sharing on, not connected"];
-    else
-        [bottom addObject:g_indVpnShared ? @"Sharing VPN over USB" : @"Sharing Wi-Fi over USB"];
-    if (g_indVpn && !(sharing && g_applied && g_indVpnShared))
-        [bottom addObject:@"VPN on"];
-    return @{ @"show": @(sharing || g_b5Running),
-              @"title": [top componentsJoinedByString:@" · "],
-              @"body": [bottom componentsJoinedByString:@" · "] };
+    NSString *usb = !sharing ? @"off" : g_applied ? @"on, computer connected" : @"on, waiting for the computer";
+    NSString *vpn = g_indVpnShared         ? @"on"
+                  : !g_indVpn              ? @"off (no VPN)"
+                  : !sharing               ? @"off (USB sharing is off)"
+                  : !g_applied             ? @"on once the computer connects"
+                                           : @"off (VPN not shared)";
+    NSString *lock = !g_b5Running ? @"off" : g_b5Want == 2 ? @"Force 2.4 GHz" : @"Force 5 GHz";
+    return @{ @"show": @YES,
+              @"title": band ? [@"Wi-Fi: " stringByAppendingString:band] : @"Wi-Fi: not connected",
+              @"body": [NSString stringWithFormat:@"USB sharing: %@\nVPN pass-through: %@\nBand lock: %@", usb, vpn, lock] };
 }
 
 /* After anything that can change the summary: write it, and if it stays
@@ -2769,8 +2767,8 @@ static void writeStatus(NSDictionary *d)
 }
 
 /* What iOS's hotspot service reports (its state, why, and the devices it
- * counts as connected), logged when it changes. iOS's own blue "Personal
- * Hotspot" indicator only shows while this counts a connected device. */
+ * counts as connected), logged when it changes, and the count passed on for
+ * iOS's blue "Personal Hotspot" indicator. */
 static void misLog(void)
 {
     static NSString *last;
@@ -2789,35 +2787,14 @@ static void misLog(void)
     last = s;
     NSLog(@"wifitetherd: hotspot service reports: %@", s);
 
-    /* Temporary (1.6 test builds): tells the status bar add-on in SpringBoard
-     * to note its tethering state now (src/bar/diag.m). */
+    /* The number of connected devices, for the status bar add-on in
+     * SpringBoard: iOS's blue hotspot indicator (src/bar/hotspot.m). */
     static int tok = -1;
     id cur = [d[@"Hosts"] isKindOfClass:[NSDictionary class]] ? d[@"Hosts"][@"Current"] : nil;
     if (tok >= 0 || notify_register_check("com.wifitether.hotspot", &tok) == NOTIFY_STATUS_OK) {
         notify_set_state(tok, [cur respondsToSelector:@selector(unsignedLongLongValue)] ? [cur unsignedLongLongValue] : 0);
         notify_post("com.wifitether.hotspot");
     }
-}
-
-/* Temporary (1.6 test builds): what iOS's hotspot service (misd) has to do
- * with the status bar's indicators: which of these names its program file
- * contains. Read only, once at start. */
-static void misdDiag(void)
-{
-    NSData *d = [NSData dataWithContentsOfFile:@"/usr/libexec/misd" options:NSDataReadingMappedIfSafe error:nil];
-    if (!d) {
-        NSLog(@"wifitetherd: diag: can't read /usr/libexec/misd");
-        return;
-    }
-    NSMutableArray *has = [NSMutableArray array], *missing = [NSMutableArray array];
-    for (NSString *m in @[@"SystemStatus.framework", @"SpringBoardServices.framework", @"background-activity",
-                          @"BackgroundActivit", @"StatusBarStyleOverride", @"STStatusBar", @"SBSStatusBar",
-                          @"Tethering", @"tethering", @"Hosts", @"USB-Ethernet"]) {
-        NSRange r = [d rangeOfData:[m dataUsingEncoding:NSUTF8StringEncoding] options:0 range:NSMakeRange(0, d.length)];
-        [(r.location != NSNotFound ? has : missing) addObject:m];
-    }
-    NSLog(@"wifitetherd: diag: misd contains: %@; doesn't: %@", [has componentsJoinedByString:@", "],
-          [missing componentsJoinedByString:@", "]);
 }
 
 static void reconcile(void)
@@ -3200,7 +3177,6 @@ int main(int argc, char **argv)
         /* Created suspended; reconcile() resumes it while the switch is on. */
 
         NSLog(@"wifitetherd: started");
-        misdDiag();
         reconcile();
     }
     /* Apple's hotspot and Wi-Fi code answers through the main run loop

@@ -239,7 +239,14 @@ static NSString *appBuild(void)
 {
     NSString *v = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"";
     NSRange dash = [v rangeOfString:@"-" options:NSBackwardsSearch];
-    return dash.location != NSNotFound ? [v substringFromIndex:dash.location + 1] : @"local";
+    return dash.location != NSNotFound ? [v substringFromIndex:dash.location + 1] : nil;   /* GitHub's build number */
+}
+
+/* "1.6, build 37", or "1.6" for a build made elsewhere. */
+static NSString *versionText(NSString *joiner)
+{
+    NSString *b = appBuild();
+    return b ? [NSString stringWithFormat:@"%@%@%@", appVersion(), joiner, b] : appVersion();
 }
 
 /* ── The log, to send with a problem report ─────────────────────────────── */
@@ -264,8 +271,9 @@ static NSString *logText(void)
 
     sysctlbyname("hw.machine", machine, &n, NULL, 0);
     f.dateFormat = @"yyyy-MM-dd HH:mm:ss";
-    [t appendFormat:@"Tether & Band %@ (build %@) on %s, iOS %@, %@\n\n", appVersion(), appBuild(), machine,
-                    UIDevice.currentDevice.systemVersion, [f stringFromDate:[NSDate date]]];
+    /* The first line names the log: pasted into Files or Notes, it becomes the file's name. */
+    [t appendFormat:@"Tether & Band log %@ (version %@, %s, iOS %@)\n\n", [f stringFromDate:[NSDate date]],
+                    versionText(@", build "), machine, UIDevice.currentDevice.systemVersion];
     for (NSString *name in @[@"daemon.log.old", @"daemon.log"]) {
         NSString *s = readText([WT_DIR stringByAppendingPathComponent:name]);
         if (s.length)
@@ -275,11 +283,12 @@ static NSString *logText(void)
     if (vpn.length)
         [t appendFormat:@"===== vpn.log (end) =====\n%@\n",
                         vpn.length > 100000 ? [vpn substringFromIndex:vpn.length - 100000] : vpn];
-    /* Temporary (1.6 test builds): what SpringBoard has for the hotspot
-     * indicator (src/bar/diag.m). */
-    NSString *sb = readText([WT_DIR stringByAppendingPathComponent:@"springboard-diag.txt"]);
-    if (sb.length)
-        [t appendFormat:@"===== springboard-diag.txt =====\n%@\n", sb];
+    /* The status bar add-on in SpringBoard: the blue hotspot indicator. */
+    for (NSString *name in @[@"springboard.log.old", @"springboard.log"]) {
+        NSString *s = readText([WT_DIR stringByAppendingPathComponent:name]);
+        if (s.length)
+            [t appendFormat:@"===== %@ =====\n%@\n", name, s];
+    }
     return t;
 }
 
@@ -331,8 +340,11 @@ static NSString *logText(void)
 - (void)copyLog
 {
     NSString *t = logText();
-    if (t.length > 500000)
-        t = [@"(earlier part left out)\n" stringByAppendingString:[t substringFromIndex:t.length - 500000]];
+    if (t.length > 500000) {   /* keep the first line (the log's name), then the newest part */
+        NSRange nl = [t rangeOfString:@"\n"];
+        NSString *head = nl.location != NSNotFound && nl.location < 400 ? [t substringToIndex:nl.location + 1] : @"";
+        t = [NSString stringWithFormat:@"%@(older lines left out)\n%@", head, [t substringFromIndex:t.length - 500000]];
+    }
     UIPasteboard.generalPasteboard.string = t;
     [_copy setTitle:@"Copied" forState:UIControlStateNormal];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -363,13 +375,15 @@ static NSString *logText(void)
     [_note addTarget:self action:@selector(noteToggled:) forControlEvents:UIControlEventValueChanged];
 
     UILabel *labelFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
-    labelFoot.text = @"Shows 2.4, 5 or 6 over the Wi-Fi icon at the top of the screen, in every app. "
-                     @"After installing or updating, respring once for it to appear.\n\n"
+    labelFoot.text = @"The Wi-Fi icon at the top of the screen shows the band: its arcs for the signal, with "
+                     @"2.4, 5 or 6 underneath, in every app. After installing or updating, respring once for it "
+                     @"to appear.\n\n"
                      @"It loads into every app, so an app that looks for tweaks (some banking apps and games) "
                      @"could notice it, even with this off. If one does, turn tweaks off for that app with Choicy.";
     UILabel *noteFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
-    noteFoot.text = @"A quiet notification in Notification Centre showing the band and what's switched on. It "
-                    @"updates by itself, with no sound or banner. If you clear it, it comes back at the next change.";
+    noteFoot.text = @"A quiet notification in Notification Centre: the Wi-Fi band, then USB sharing, VPN "
+                    @"pass-through and band lock, each on or off. It updates by itself, with no sound or banner. "
+                    @"If you clear it, it comes back at the next change.";
     UILabel *statusHead = wtHeader(@"Status bar"), *noteHead = wtHeader(@"Notification Centre"),
             *logHead = wtHeader(@"Log");
 
@@ -560,8 +574,8 @@ static NSString *logText(void)
     UIButton *issue = [self link:@"Report a problem" action:@selector(openIssues)];
 
     UILabel *foot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
-    foot.text = [NSString stringWithFormat:@"Version %@ · Build %@\nDeveloper: scog3\nFree and open source (MIT)",
-                                           appVersion(), appBuild()];
+    foot.text = [NSString stringWithFormat:@"Version %@\nDeveloper: scog3\nFree and open source (MIT)",
+                                           versionText(@" · Build ")];
     foot.textAlignment = NSTextAlignmentCenter;
 
     UILabel *h1 = wtHeader(@"USB tethering"), *h2 = wtHeader(@"Wi-Fi band"), *h3 = wtHeader(@"How it works"),
