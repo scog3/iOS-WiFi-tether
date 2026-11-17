@@ -545,10 +545,10 @@ static NSString *untestedText(void)
     } else if ([state isEqualToString:@"airplane"]) {
         [self showState:@"Airplane mode is on" color:UIColor.systemOrangeColor];
     } else if ([state isEqualToString:@"waitcomputer"]) {
-        /* "Connected": a computer's Apple device software is talking to the
-         * phone, but the computer isn't using it for internet (yet). */
+        /* "Connected": the computer has set up the phone's tethering network
+         * but isn't using it (a Mac that's online another way). */
         BOOL done = [st[@"usbDone"] boolValue];
-        if ([st[@"host"] boolValue])
+        if ([st[@"usbStandby"] boolValue])
             [self showState:@"Connected to the computer" color:UIColor.systemYellowColor];
         else if (done)
             [self showState:@"Computer didn't connect" color:UIColor.systemOrangeColor];

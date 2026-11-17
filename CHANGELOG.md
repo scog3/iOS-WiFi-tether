@@ -4,26 +4,28 @@
 
 **USB tethering**
 
-- **Quicker to connect when Windows misses the hotspot**, for example when sharing is turned
-  on with the cable already in. The first retry comes after 6 seconds instead of 10, and
-  all 4 are done in under a minute.
-- The retry count shows again: *Retrying (2 of 4)…*
-- **Waiting for the computer** (blue): the computer hasn't seen the phone yet.
-- **Connected to the computer** (yellow): the computer's Apple software sees the phone,
-  but the computer isn't using it for internet yet. Once the retries are over, a
-  one-line tip for a Mac on Wi-Fi shows too.
-- **Computer didn't connect** (orange): the retries are over and the computer never saw
-  the phone.
-- Once the retries are over, a **Reconnect** button starts them again.
+- **The app now sees what the computer is doing with the phone's USB connection**, and
+  waits accordingly.
+- **Waiting for the computer** (blue): the computer hasn't picked up the hotspot yet. The
+  app restarts the hotspot to make it look again, showing *Retrying (2 of 4)…*
+- **Connected to the computer** (yellow): the computer has the phone's network but isn't
+  using it, as a Mac that's on Wi-Fi does. Restarting doesn't help there, so the app
+  doesn't; it shows a one-line tip instead.
+- **Computer didn't connect** (orange): the retries are over.
+- A **Reconnect** button appears once the retries are over (or after 30 seconds of
+  *Connected*). It tries straight away and starts the retries again.
+- **Retries no longer interrupt the computer.** A restart while the computer is still
+  setting up made it start over, so Windows could take minutes. The first retry now
+  waits 15 seconds (Windows usually connects by itself within that), and none happen
+  within 10 seconds of the computer changing the phone's USB setup.
 - **No retrying with nothing plugged in.** The app now checks that the phone has external
   power (what shows it charging) before waiting for a computer, so with the cable out it
   just says *Ready: plug in the USB cable*.
-- **Telling a charger from a computer:** the app now reads what's plugged in from the
-  battery's own data, since the call it used before isn't there on iOS 15. Where the
-  phone reports it, a charger no longer counts as a computer. The log shows what each
-  one reports (`power:` lines).
-- The log also shows how the computer set up the phone's USB side (`usb:` lines), to
-  find out whether the phone can tell a Mac from a PC.
+- **A charger no longer counts as a computer:** with no computer setting up the phone's
+  USB connection, the app just says *Ready: plug in the USB cable*. (Where that can't be
+  read, it goes by what the battery reports is plugged in.)
+- The log says what the computer has done with the USB connection (`usb:` lines) and
+  what's powering the phone (`power:` lines).
 - Shorter messages under the status.
 
 ## 1.4

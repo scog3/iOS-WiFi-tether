@@ -110,8 +110,8 @@ Personal Hotspot off; the background services then sleep and use no battery.
 | --- | --- |
 | 🟢 Sharing Wi-Fi over USB | Working |
 | 🔵 Ready: plug in the USB cable | Personal Hotspot is on; plug in |
-| 🔵 Waiting for the computer | Plugged in, the computer is setting up the connection; the app retries up to 4 times |
-| 🟡 Connected to the computer | The computer sees the device but isn't using it for internet yet; the app retries up to 4 times, then shows **Reconnect**. On a Mac that's on Wi-Fi, see [What you need](#what-you-need) |
+| 🔵 Waiting for the computer | Plugged in; the computer hasn't picked up the hotspot yet. The app retries up to 4 times |
+| 🟡 Connected to the computer | The computer has the device's network but isn't using it, as a Mac on Wi-Fi does; see [What you need](#what-you-need) |
 | 🟠 Computer didn't connect | The retries are over: tap **Reconnect**, or unplug and plug back in |
 | 🟠 Starting Personal Hotspot | Turning the hotspot on; see the message underneath if it stays |
 | 🟠 Waiting for Wi-Fi | Connect to a Wi-Fi network |
@@ -194,11 +194,12 @@ Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
 
 **USB tethering**
 
-- **"Waiting for the computer" for a long time.** Windows often misses the hotspot coming
-  on when the cable is already in (sharing turned on after plugging in, or a new USB
-  port). The app restarts the hotspot to make it look again, up to 4 times in about a
-  minute. If that doesn't work, tap **Reconnect** to start again, or unplug and plug back
-  in, which is usually quickest.
+- **"Waiting for the computer" for a long time.** Windows sometimes misses the hotspot
+  coming on when the cable is already in (sharing turned on after plugging in, or a new
+  USB port). Windows usually catches it within 15 seconds; if not, the app restarts the
+  hotspot to make it look again, up to 4 times. If that doesn't work, tap **Reconnect**,
+  or unplug and plug back in, which is usually quickest. If a laptop's USB port goes
+  into power saving, the log shows `power: not plugged in` while the cable is in.
 - **Mac: "iPhone USB" says *Attached* and the app says "Connected to the computer".**
   The Mac is using another connection (usually its Wi-Fi) and keeps the iPhone on
   standby. Put **iPhone USB** above Wi-Fi in **System Settings → Network → ⋯ → Set Service
@@ -272,10 +273,11 @@ root) fills that gap whenever sharing is on:
    and disconnects Wi-Fi. If Wi-Fi drops while the hotspot is on, it hides the hotspot and
    turns Wi-Fi back on (MobileWiFi `WiFiManagerClientSetPower`). Airplane mode is switched
    with RadiosPreferences (AppSupport), as Control Center does. Whether anything is
-   plugged in comes from the battery's `ExternalConnected` (IOKit's `IOPMPowerSource`), and
-   whether it's a computer from the external power adapter details (USB host family codes);
-   iOS's `com.apple.mobile.lockdown.host_attached` / `host_detached` notifications say when
-   a computer's Apple device software is talking to it.
+   plugged in comes from the phone's own USB entries in the I/O registry: which USB
+   configuration the computer picked (`IOUSBDeviceInterface`), whether it includes the
+   tethering network (`AppleUSBEthernet`), and whether the computer is using it
+   (`HostAttached` on `AppleUSBEthernetDevice`). Where those aren't there, the battery's
+   `ExternalConnected` and adapter details (`IOPMPowerSource`) decide.
 5. **Fast reconnects.** Rules in the main filter ruleset record every new TCP connection
    from the computer, and answer packets of connections with no record (dropped because
    the route changed) with a TCP reset, so the computer reconnects at once instead of
