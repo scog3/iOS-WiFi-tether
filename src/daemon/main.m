@@ -1145,8 +1145,9 @@ static NSString *usbWait(void)
         }
     }
     if (usbStandby(now))
-        return [NSString stringWithFormat:@"Not in use. On a Mac, put %@ USB above Wi-Fi in Network settings.",
-                                          deviceWord()];
+        return [NSString stringWithFormat:@"The computer isn't using it. On a Mac, turn its Wi-Fi off, or to keep "
+                                          @"Wi-Fi on: System Settings → Network → ⋯ → Set Service Order, and drag "
+                                          @"%@ USB to the top.", deviceWord()];
     if (g_usbDone)
         return @"Tap Reconnect, or unplug and plug back in.";
     return g_usbTries ? [NSString stringWithFormat:@"Retrying (%d of %d)…", g_usbTries, USB_TRIES] : @"";

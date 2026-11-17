@@ -10,7 +10,7 @@
   app restarts the hotspot to make it look again, showing *Retrying (2 of 4)…*
 - **Connected to the computer** (yellow): the computer has the phone's network but isn't
   using it, as a Mac that's on Wi-Fi does. Restarting doesn't help there, so the app
-  doesn't; it shows a one-line tip instead.
+  doesn't; it says how to turn the Mac's Wi-Fi off or make it use the phone instead.
 - **Computer didn't connect** (orange): the retries are over.
 - A **Reconnect** button appears once the retries are over (or after 30 seconds of
   *Connected*). It tries straight away and starts the retries again.
