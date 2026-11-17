@@ -35,10 +35,23 @@ jobs:
             src/roam/roam.m -framework Foundation -framework CoreFoundation -o WiFiTetherRoam.dylib
           lipo -info WiFiTetherRoam.dylib
 
+      # The status bar add-on (the band on the Wi-Fi icon) loads into every
+      # app, SpringBoard included, which are arm64e on A12 and newer too.
+      - name: Build the status bar add-on (arm64 + arm64e)
+        continue-on-error: true
+        run: |
+          xcrun -sdk iphoneos clang -arch arm64 -arch arm64e -miphoneos-version-min=15.0 -Os -Wall \
+            -fobjc-arc -dynamiclib \
+            -install_name /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherBar.dylib \
+            src/bar/bar.m -framework UIKit -framework QuartzCore -framework CoreGraphics -framework Foundation -o WiFiTetherBar.dylib
+          lipo -info WiFiTetherBar.dylib
+
       - uses: actions/upload-artifact@v4
         with:
           name: roam-dylib
-          path: WiFiTetherRoam.dylib
+          path: |
+            WiFiTetherRoam.dylib
+            WiFiTetherBar.dylib
 
   build:
     needs: roam
@@ -69,7 +82,28 @@ jobs:
         run: |
           set -o pipefail
           export ROAM_DYLIB="$PWD/prebuilt/WiFiTetherRoam.dylib"
+          export BAR_DYLIB="$PWD/prebuilt/WiFiTetherBar.dylib"
           PKG_VERSION="$(tr -d '[:space:]' < VERSION)-${GITHUB_RUN_NUMBER}" bash build-linux.sh 2>&1 | tee build.log
+
+      # Shows on the run's page whether the Mac (arm64e) part made it in.
+      - name: Check the hand-over add-on
+        shell: bash
+        run: |
+          ARCHS="$(cat build/roam-archs.txt 2>/dev/null || echo unknown)"
+          echo "ROAM_ARCHS=$ARCHS" >> "$GITHUB_ENV"
+          if [[ " $ARCHS " == *" arm64e "* ]]; then
+            echo "### ✅ Hand-over add-on: $ARCHS (includes A12 and newer)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⚠️ Hand-over add-on: $ARCHS only. The Mac (arm64e) part didn't make it in, so A12 and newer move bands by rejoining" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Hand-over add-on::Built for $ARCHS only; the Mac (arm64e) part is missing"
+          fi
+          BAR="$(cat build/bar-archs.txt 2>/dev/null || echo unknown)"
+          if [[ " $BAR " == *" arm64e "* ]]; then
+            echo "### ✅ Status bar add-on: $BAR (includes A12 and newer)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⚠️ Status bar add-on: $BAR only. The Mac (arm64e) part didn't make it in, so A12 and newer won't show the band on the Wi-Fi icon" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Status bar add-on::Built for $BAR only; the Mac (arm64e) part is missing"
+          fi
 
       - name: Release notes from CHANGELOG.md
         shell: bash
@@ -83,6 +117,7 @@ jobs:
           ' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "No changelog entry for $VERSION." > notes.md
           printf '\nInstall: open this page in Safari on the iPhone, tap the .deb, then open it in Filza or Sileo.\n' >> notes.md
+          printf 'Band switcher hand-over built for: %s.\n' "$ROAM_ARCHS" >> notes.md
           cat notes.md
 
       - name: Publish release v${{ env.VERSION }}
