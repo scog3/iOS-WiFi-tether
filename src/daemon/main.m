@@ -2768,6 +2768,28 @@ static void writeStatus(NSDictionary *d)
     chmod(WT_STATUS, 0644);
 }
 
+/* What iOS's hotspot service reports (its state, why, and the devices it
+ * counts as connected), logged when it changes. iOS's own blue "Personal
+ * Hotspot" indicator only shows while this counts a connected device. */
+static void misLog(void)
+{
+    static NSString *last;
+    NSDictionary *d = scValue(@"com.apple.MobileInternetSharing");
+    NSString *s = @"nothing";
+    if (d && [NSJSONSerialization isValidJSONObject:d]) {
+        NSData *j = [NSJSONSerialization dataWithJSONObject:d options:NSJSONWritingSortedKeys error:nil];
+        if (j)
+            s = [[NSString alloc] initWithData:j encoding:NSUTF8StringEncoding];
+    } else if (d) {
+        s = [[d.description componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+                componentsJoinedByString:@" "];
+    }
+    if ([s isEqualToString:last])
+        return;
+    last = s;
+    NSLog(@"wifitetherd: hotspot service reports: %@", s);
+}
+
 static void reconcile(void)
 {
     @autoreleasepool {
@@ -2788,6 +2810,7 @@ static void reconcile(void)
                 kill(m, SIGTERM);
         }
         lastShare = share;
+        misLog();
 
         /* The hotspot service restarted (Share installed or updated, a crash...):
          * our connection to it is dead, so restart ourselves to reconnect. */

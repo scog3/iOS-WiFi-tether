@@ -4,8 +4,8 @@
 
 **See what's on without opening the app**
 
-- **Band on the Wi-Fi icon:** a small **5**, **2.4** or **6** (6 GHz) in the corner of the
-  status bar's Wi-Fi icon, in amber with a thin dark outline, in every app. It shows the
+- **Band on the Wi-Fi icon:** **2.4**, **5** or **6** (6 GHz) over the status bar's Wi-Fi
+  icon (2.4 as wide as the icon), in yellow with a deep purple outline, in every app. It shows the
   band Wi-Fi is actually on, not what the switches are set to. On by default. Respring
   once after installing for it to appear.
 - **Status notification** (optional): one quiet notification in Notification Centre with
@@ -15,7 +15,7 @@
 
 **App**
 
-- **Menu** (☰, top left) that slides out, with **Settings** (the two options above) and
+- **Menu** (☰, top right, level with the title, or swipe in from the right edge) that slides out, with **Settings** (the two options above) and
   **About** (short instructions, a link to GitHub, version, build and developer).
 - **Share or copy the log** from Settings: as a .txt file (AirDrop, Save to Files, Mail…)
   or onto the clipboard, with the version and device on top. No more Filza for that.

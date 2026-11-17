@@ -50,14 +50,14 @@ like a captive portal you've already signed in to on the phone.
 
 **See it at a glance**
 
-- **Band on the Wi-Fi icon.** A small **5**, **2.4** or **6** in the corner of the status
-  bar's Wi-Fi icon, in every app: the band it's actually on, whatever the switches say. On
+- **Band on the Wi-Fi icon.** **2.4**, **5** or **6** in yellow over the status bar's Wi-Fi
+  icon, in every app: the band it's actually on, whatever the switches say. On
   by default; switch it off in Settings.
 - **Status notification.** An optional quiet notification in Notification Centre with the
   band and what's switched on, for example *5 GHz Wi-Fi · Force 5 GHz on* and *Sharing VPN
   over USB*. No sound or banner, and it updates by itself.
 
-Both are in the app's menu (☰, top left) under **Settings**, which can also share or copy
+Both are in the app's menu (☰ top right, or swipe in from the right edge) under **Settings**, which can also share or copy
 the log for a problem report. **About** has short instructions and the version.
 
 Both are **free and open source** (MIT).
@@ -266,7 +266,9 @@ Muhammet Ali Aydın (MIT). Upstream tested it on iOS 17.6.1; on iOS 15 it's new.
   every app. Switching it off in Settings stops it drawing anything, but it still loads;
   to keep it out of one app, use a tweak like Choicy.
 - **No status notification.** Allow notifications for **Tether & Band** in Settings →
-  Notifications. It only shows while sharing or a band switch is on. If you clear it, it
+  Notifications. If it isn't in that list, respring; if it's still missing, reboot
+  userspace in your jailbreak app (Dopamine: Reboot Userspace). It only shows while sharing
+  or a band switch is on. If you clear it, it
   comes back at the next change.
 
 **The log:** in the app, **☰ → Settings → Share log file…** (AirDrop, Save to Files, Mail…)
@@ -341,7 +343,9 @@ root) fills that gap whenever sharing is on:
    a short summary (`summary.plist`) and, when it changes for 3 seconds, starts the app in
    the background (`SBSLaunchApplicationWithIdentifier`, as the `open` command does). The
    app replaces its one notification in place (passive interruption level: no sound, no
-   banner) and quits, so the next change starts it afresh.
+   banner) and quits, so the next change starts it afresh. Jailbreak apps count as system
+   apps to iOS, which only lists one in Settings → Notifications if its `Info.plist` has
+   `SBAppUsesLocalNotifications`; there's no "Allow Notifications?" question for them.
 
 Everything is removed again when you turn sharing off or uninstall.
 

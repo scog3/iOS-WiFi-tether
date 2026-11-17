@@ -358,8 +358,10 @@ static NSString *logText(void)
     [_note addTarget:self action:@selector(noteToggled:) forControlEvents:UIControlEventValueChanged];
 
     UILabel *labelFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
-    labelFoot.text = @"Shows 5 or 2.4 in the corner of the Wi-Fi icon at the top of the screen, in every app. "
-                     @"After installing or updating, respring once for it to appear.";
+    labelFoot.text = @"Shows 2.4, 5 or 6 over the Wi-Fi icon at the top of the screen, in every app. "
+                     @"After installing or updating, respring once for it to appear.\n\n"
+                     @"It loads into every app, so an app that looks for tweaks (some banking apps and games) "
+                     @"could notice it, even with this off. If one does, turn tweaks off for that app with Choicy.";
     UILabel *noteFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
     noteFoot.text = @"A quiet notification in Notification Centre showing the band and what's switched on. It "
                     @"updates by itself, with no sound or banner. If you clear it, it comes back at the next change.";
@@ -369,8 +371,8 @@ static NSString *logText(void)
     _share = [self logButton:@"Share log file…" action:@selector(shareLog:)];
     _copy = [self logButton:@"Copy log" action:@selector(copyLog)];
     UILabel *logFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
-    logFoot.text = @"What the background service did, to attach to a problem report or send to whoever's "
-                   @"helping. It includes your network's addresses, so only send it to people you trust.";
+    logFoot.text = @"A record of what the app has been doing. If something isn't working, attach it to your "
+                   @"report on GitHub. It contains your network addresses, so only share it with people you trust.";
 
     UIView *labelBox = [self indented:labelFoot], *noteBox = [self indented:noteFoot];
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
@@ -423,29 +425,56 @@ static NSString *logText(void)
         updateStatusNotification(nil);   /* takes it away */
         return;
     }
-    [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:UNAuthorizationOptionAlert
-        completionHandler:^(BOOL granted, NSError *error) {
+    /* Jailbreak apps are "system" apps to iOS, so there's no "Allow
+     * Notifications?" question: iOS lists the app in Settings → Notifications
+     * (Info.plist's SBAppUsesLocalNotifications) and this just says whether
+     * they're allowed there. */
+    UNUserNotificationCenter *nc = UNUserNotificationCenter.currentNotificationCenter;
+    [nc requestAuthorizationWithOptions:UNAuthorizationOptionAlert completionHandler:^(BOOL granted, NSError *error) {
+        [nc getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *ns) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (granted) {
+                if (granted || ns.authorizationStatus == UNAuthorizationStatusAuthorized ||
+                    ns.authorizationStatus == UNAuthorizationStatusProvisional) {
                     writeSetting(WT_STATUSNOTE, YES);
                     updateStatusNotification(nil);
                     return;
                 }
                 [self->_note setOn:NO animated:YES];
-                UIAlertController *a = [UIAlertController
-                    alertControllerWithTitle:@"Notifications are off"
-                                     message:@"Allow notifications for Tether & Band in Settings → Notifications, "
-                                             @"then turn this on again."
-                              preferredStyle:UIAlertControllerStyleAlert];
-                [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-                [a addAction:[UIAlertAction actionWithTitle:@"Open Settings" style:UIAlertActionStyleDefault
-                    handler:^(UIAlertAction *x) {
-                        [UIApplication.sharedApplication openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString]
-                                                         options:@{} completionHandler:nil];
-                    }]];
-                [self presentViewController:a animated:YES completion:nil];
+                [self notificationsOff:error];
             });
         }];
+    }];
+}
+
+/* Not allowed: either switched off for this app in Settings, or iOS hasn't
+ * listed the app there yet (it does that when the app is installed). */
+- (void)notificationsOff:(NSError *)error
+{
+    NSLog(@"WiFiTether: notifications not allowed (%@ %ld)", error.domain, (long)error.code);
+    UIAlertController *a = [UIAlertController
+        alertControllerWithTitle:@"Notifications are off"
+                         message:@"Turn on Allow Notifications in Settings → Notifications → Tether & Band, then turn "
+                                 @"this on again.\n\nNot in the list? Respring and try again. If it's still missing, "
+                                 @"reboot userspace in your jailbreak app (Dopamine: Reboot Userspace)."
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Open Settings" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *x) {
+            NSString *url = UIApplicationOpenSettingsURLString;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+            /* iOS 15.4 and newer: straight to this app's notifications */
+            if ([NSProcessInfo.processInfo isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){15, 4, 0}] &&
+                &UIApplicationOpenNotificationSettingsURLString != NULL)
+                url = UIApplicationOpenNotificationSettingsURLString;
+#pragma clang diagnostic pop
+            [UIApplication.sharedApplication openURL:[NSURL URLWithString:url] options:@{} completionHandler:^(BOOL ok) {
+                if (!ok)
+                    [UIApplication.sharedApplication openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString]
+                                                     options:@{} completionHandler:nil];
+            }];
+        }]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 @end
@@ -559,10 +588,13 @@ static NSString *logText(void)
 
 @end
 
-/* ── The menu that slides out from the left ─────────────────────────────── */
+/* ── The menu that slides out from the right (the side its button is on) ── */
 
 @interface WTMenuController : UIViewController
 @property (nonatomic, copy) void (^onPick)(NSInteger item);   /* 0 Settings, 1 About */
+@property (nonatomic) BOOL byFinger;   /* swiped in from the edge: the finger moves it, not an animation */
+- (void)follow:(CGFloat)in;            /* the finger is this far in from the right edge */
+- (void)letGo:(BOOL)open;
 @end
 
 @implementation WTMenuController {
@@ -653,19 +685,38 @@ static NSString *logText(void)
         [_dim.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [_panel.topAnchor constraintEqualToAnchor:self.view.topAnchor],
         [_panel.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
-        [_panel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [_panel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [_panel.widthAnchor constraintEqualToConstant:_width],
         [items.topAnchor constraintEqualToAnchor:_panel.safeAreaLayoutGuide.topAnchor constant:24],
-        [items.leadingAnchor constraintEqualToAnchor:_panel.safeAreaLayoutGuide.leadingAnchor constant:20],
-        [items.trailingAnchor constraintEqualToAnchor:_panel.trailingAnchor constant:-20],
+        [items.leadingAnchor constraintEqualToAnchor:_panel.leadingAnchor constant:20],
+        [items.trailingAnchor constraintEqualToAnchor:_panel.safeAreaLayoutGuide.trailingAnchor constant:-20],
     ]];
-    _panel.transform = CGAffineTransformMakeTranslation(-_width - 20, 0);
+    _panel.transform = CGAffineTransformMakeTranslation(_width + 20, 0);
 }
 
 - (void)viewDidAppear:(BOOL)animated
 {
     [super viewDidAppear:animated];
-    [UIView animateWithDuration:0.28 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+    if (!self.byFinger)
+        [self letGo:YES];
+}
+
+- (void)follow:(CGFloat)in
+{
+    [self loadViewIfNeeded];
+    CGFloat x = MAX(0, _width - MAX(0, in));
+    _panel.transform = CGAffineTransformMakeTranslation(x, 0);
+    _dim.alpha = 1 - x / _width;
+}
+
+- (void)letGo:(BOOL)open
+{
+    if (!open) {
+        [self close];
+        return;
+    }
+    [UIView animateWithDuration:0.28 delay:0 options:UIViewAnimationOptionCurveEaseOut |
+                                                    UIViewAnimationOptionBeginFromCurrentState animations:^{
         self->_panel.transform = CGAffineTransformIdentity;
         self->_dim.alpha = 1;
     } completion:nil];
@@ -673,8 +724,9 @@ static NSString *logText(void)
 
 - (void)closeThen:(void (^)(void))then
 {
-    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-        self->_panel.transform = CGAffineTransformMakeTranslation(-self->_width - 20, 0);
+    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseIn |
+                                                    UIViewAnimationOptionBeginFromCurrentState animations:^{
+        self->_panel.transform = CGAffineTransformMakeTranslation(self->_width + 20, 0);
         self->_dim.alpha = 0;
     } completion:^(BOOL f) {
         [self dismissViewControllerAnimated:NO completion:then];
@@ -696,15 +748,15 @@ static NSString *logText(void)
     }];
 }
 
-/* Drag the panel left to close it. */
+/* Drag the panel right to close it. */
 - (void)dragged:(UIPanGestureRecognizer *)g
 {
-    CGFloat x = MIN(0, [g translationInView:self.view].x);
+    CGFloat x = MAX(0, [g translationInView:self.view].x);
     if (g.state == UIGestureRecognizerStateChanged) {
         _panel.transform = CGAffineTransformMakeTranslation(x, 0);
-        _dim.alpha = 1 + x / _width;
+        _dim.alpha = 1 - x / _width;
     } else if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled) {
-        if (x < -_width / 3 || [g velocityInView:self.view].x < -500) {
+        if (x > _width / 3 || [g velocityInView:self.view].x > 500) {
             [self close];
         } else {
             [UIView animateWithDuration:0.2 animations:^{
@@ -734,6 +786,7 @@ static NSString *logText(void)
     UISwitch *_band24Toggle; /* force 2.4 GHz (only one of the two is on) */
     NSTimer  *_timer;
     unsigned  _ticks;
+    WTMenuController *_swiping;   /* the menu being swiped in from the right edge */
 }
 
 - (UILabel *)labelWithSize:(CGFloat)size weight:(UIFontWeight)weight color:(UIColor *)color
@@ -794,21 +847,36 @@ static NSString *logText(void)
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
 
-    /* The menu (Settings, About) slides out from the left. */
+    UILabel *title = [self labelWithSize:34 weight:UIFontWeightBold color:UIColor.labelColor];
+    title.text = @"WiFi Tether &\nBand Switcher";
+
+    /* The menu (Settings, About): a button level with the title's first line,
+     * on the right, like the buttons beside big titles in Apple's apps; the
+     * menu slides out from that side. */
     UIButton *menu = [UIButton buttonWithType:UIButtonTypeSystem];
-    [menu setImage:[UIImage systemImageNamed:@"line.horizontal.3"
+    [menu setImage:[UIImage systemImageNamed:@"line.3.horizontal"
                            withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:22
-                                                                                            weight:UIImageSymbolWeightSemibold]]
+                                                                                            weight:UIImageSymbolWeightMedium]]
           forState:UIControlStateNormal];
     menu.accessibilityLabel = @"Menu";
     [menu addTarget:self action:@selector(openMenu) forControlEvents:UIControlEventTouchUpInside];
-    [menu.widthAnchor constraintEqualToConstant:44].active = YES;
-    [menu.heightAnchor constraintEqualToConstant:44].active = YES;
-    menu.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    UIStackView *menuRow = [[UIStackView alloc] initWithArrangedSubviews:@[menu, [UIView new]]];
-
-    UILabel *title = [self labelWithSize:34 weight:UIFontWeightBold color:UIColor.labelColor];
-    title.text = @"WiFi Tether &\nBand Switcher";
+    menu.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;   /* lines up with the cards' edge */
+    UIView *titleRow = [UIView new];
+    title.translatesAutoresizingMaskIntoConstraints = NO;
+    menu.translatesAutoresizingMaskIntoConstraints = NO;
+    [titleRow addSubview:title];
+    [titleRow addSubview:menu];
+    [NSLayoutConstraint activateConstraints:@[
+        [title.topAnchor constraintEqualToAnchor:titleRow.topAnchor],
+        [title.bottomAnchor constraintEqualToAnchor:titleRow.bottomAnchor],
+        [title.leadingAnchor constraintEqualToAnchor:titleRow.leadingAnchor],
+        [title.trailingAnchor constraintLessThanOrEqualToAnchor:menu.leadingAnchor constant:-8],
+        [menu.trailingAnchor constraintEqualToAnchor:titleRow.trailingAnchor],
+        [menu.widthAnchor constraintEqualToConstant:44],
+        [menu.heightAnchor constraintEqualToConstant:44],
+        /* centred on the first line's capitals */
+        [menu.centerYAnchor constraintEqualToAnchor:title.firstBaselineAnchor constant:-round(title.font.capHeight / 2)],
+    ]];
     UILabel *subtitle = [self labelWithSize:15 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
     subtitle.text = [NSString stringWithFormat:@"Shares this %@'s Wi-Fi or VPN with a computer over USB, and "
                                                @"keeps Wi-Fi on the band you choose.", deviceWord()];
@@ -907,7 +975,7 @@ static NSString *logText(void)
                                       [self row:@"DNS" value:_dns],
                                       [self row:@"VPN" value:_vpn]]];
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        menuRow, title, subtitle,
+        titleRow, subtitle,
         tetherHeader,
         _shareCard,
         [self card:@[toggleRow]],
@@ -918,8 +986,7 @@ static NSString *logText(void)
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 16;
-    [stack setCustomSpacing:2 afterView:menuRow];
-    [stack setCustomSpacing:6 afterView:title];
+    [stack setCustomSpacing:6 afterView:titleRow];
     [stack setCustomSpacing:24 afterView:subtitle];
     [stack setCustomSpacing:6 afterView:tetherHeader];
     [stack setCustomSpacing:28 afterView:statusCard];
@@ -932,13 +999,21 @@ static NSString *logText(void)
     [self.view addSubview:scroll];
     [scroll addSubview:stack];
 
+    /* The menu also comes out with a swipe in from the right edge. Scrolling
+     * waits for it, so a swipe from the edge doesn't scroll as well. */
+    UIScreenEdgePanGestureRecognizer *edge = [[UIScreenEdgePanGestureRecognizer alloc]
+        initWithTarget:self action:@selector(edgeSwiped:)];
+    edge.edges = UIRectEdgeRight;
+    [self.view addGestureRecognizer:edge];
+    [scroll.panGestureRecognizer requireGestureRecognizerToFail:edge];
+
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [scroll.topAnchor constraintEqualToAnchor:self.view.topAnchor],
         [scroll.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         [scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:4],
+        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:16],
         [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],
         /* Phones: full width with 16-point margins. iPads and other wide
          * screens: at most 540 points wide, centred, like a phone layout. */
@@ -1236,7 +1311,7 @@ static NSString *untestedText(void)
     }];
 }
 
-- (void)openMenu
+- (WTMenuController *)menu
 {
     WTMenuController *m = [WTMenuController new];
     m.modalPresentationStyle = UIModalPresentationOverFullScreen;
@@ -1246,7 +1321,43 @@ static NSString *untestedText(void)
         UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:page];
         [weakSelf presentViewController:nav animated:YES completion:nil];
     };
-    [self presentViewController:m animated:NO completion:nil];
+    return m;
+}
+
+- (void)openMenu
+{
+    if (!self.presentedViewController)
+        [self presentViewController:[self menu] animated:NO completion:nil];
+}
+
+/* Swiping in from the right edge: the menu follows the finger, and opens if
+ * it's let go a third of the way in or flicked. */
+- (void)edgeSwiped:(UIScreenEdgePanGestureRecognizer *)g
+{
+    CGFloat in = -[g translationInView:self.view].x, v = -[g velocityInView:self.view].x;
+    switch (g.state) {
+    case UIGestureRecognizerStateBegan:
+        if (self.presentedViewController)
+            return;
+        _swiping = [self menu];
+        _swiping.byFinger = YES;
+        [_swiping follow:in];
+        [self presentViewController:_swiping animated:NO completion:nil];
+        break;
+    case UIGestureRecognizerStateChanged:
+        [_swiping follow:in];
+        break;
+    case UIGestureRecognizerStateEnded: {
+        CGFloat w = MIN(300, round(self.view.bounds.size.width * 0.8));
+        [_swiping letGo:v > 500 || (in > w / 3 && v > -300)];
+        _swiping = nil;
+        break;
+    }
+    default:
+        [_swiping letGo:NO];
+        _swiping = nil;
+        break;
+    }
 }
 
 - (void)reconnect

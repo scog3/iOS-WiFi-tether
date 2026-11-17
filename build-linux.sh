@@ -110,7 +110,7 @@ else
     echo "   arm64 only (no BAR_DYLIB)"
     "$CLANG" "${CFLAGS[@]}" "${LDFLAGS[@]}" -fobjc-arc -dynamiclib \
         -install_name /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherBar.dylib \
-        src/bar/bar.m -framework UIKit -framework QuartzCore -framework CoreGraphics -framework Foundation -o "$B/WiFiTetherBar.dylib"
+        src/bar/bar.m -framework UIKit -framework QuartzCore -framework CoreGraphics -framework CoreText -framework Foundation -o "$B/WiFiTetherBar.dylib"
 fi
 BAR_ARCHS="$(archs "$B/WiFiTetherBar.dylib")"
 echo "   status bar add-on built for: $BAR_ARCHS"

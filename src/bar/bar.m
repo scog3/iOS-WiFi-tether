@@ -1,9 +1,8 @@
 /*
- * WiFiTetherBar: the Wi-Fi band on the status bar's Wi-Fi icon ("5", "2.4",
- * "6"), in amber with a thin dark outline, in the icon's bottom-right corner:
- * the text ends level with the icon's widest point (the tips of the top arc)
- * and overlaps the lower arcs a little, with a small gap cut round it so the
- * arcs stay readable.
+ * WiFiTetherBar: the Wi-Fi band on the status bar's Wi-Fi icon ("2.4", "5",
+ * "6"), in yellow with a deep purple outline, centred over the icon: "2.4" is as
+ * wide as the icon's top arc (tip to tip), and "5" and "6" are the same size.
+ * A small gap is cut round the text so the arcs stay readable.
  *
  * Since iOS 13 every app draws its own status bar, so this add-on loads into
  * every app that uses UIKit (and SpringBoard, for the home and lock screens).
@@ -21,6 +20,7 @@
  */
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <CoreText/CoreText.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <notify.h>
@@ -64,6 +64,30 @@ static void wtRemove(UIView *v)
     objc_setAssociatedObject(v, kWTKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
+/* The letters' own outline (not the line's), relative to where the text starts
+ * on its baseline (y up). */
+static CGRect wtInk(NSString *text, UIFont *font)
+{
+    NSAttributedString *as = [[NSAttributedString alloc] initWithString:text attributes:@{ NSFontAttributeName: font }];
+    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)as);
+    CGRect r = CTLineGetBoundsWithOptions(line, kCTLineBoundsUseGlyphPathBounds);
+    CFRelease(line);
+    if (CGRectIsNull(r) || r.size.width <= 0) {   /* fall back to the line's width */
+        CGSize s = [text sizeWithAttributes:@{ NSFontAttributeName: font }];
+        r = CGRectMake(0, 0, s.width, font.capHeight);
+    }
+    return r;
+}
+
+/* The size that makes "2.4" as wide as the icon; the same for every label. */
+static UIFont *wtFont(CGSize icon)
+{
+    UIFont *ref = [UIFont systemFontOfSize:10 weight:UIFontWeightBold];
+    CGFloat size = 10 * icon.width / wtInk(@"2.4", ref).size.width;
+    size = MIN(size, icon.height * 1.2);   /* digits no taller than the icon */
+    return [UIFont systemFontOfSize:MAX(5.0, round(size * 4) / 4) weight:UIFontWeightBold];
+}
+
 /* Draws the label (and the mask that cuts the gap) for this icon's size. */
 static void wtApply(UIView *v)
 {
@@ -83,27 +107,33 @@ static void wtApply(UIView *v)
     if ([objc_getAssociatedObject(v, kWTKey) isEqualToString:key] && wtOverlay(v))
         return;
 
-    /* The text: about half the icon's height, bold, ending at the icon's right
-     * edge (the top arc's tips) and sitting on its base. */
-    UIFont *font = [UIFont systemFontOfSize:MAX(5.0, round(b.size.height * 0.56 * 2) / 2) weight:UIFontWeightBold];
+    /* The text: "2.4" as wide as the icon (its widest point, the top arc's
+     * tips), "5" and "6" the same size; centred on the icon, digits halfway
+     * up it. */
+    UIFont *font = wtFont(b.size);
     NSDictionary *fill = @{ NSFontAttributeName: font,
-                            NSForegroundColorAttributeName: [UIColor colorWithRed:1.0 green:0.745 blue:0.0 alpha:1.0] };
-    CGSize ts = [text sizeWithAttributes:fill];
+                            NSForegroundColorAttributeName: [UIColor colorWithRed:1.0 green:0.839 blue:0.039 alpha:1.0] };
+    CGRect ink = wtInk(text, font);
     CGFloat pad = 4;   /* the mask reaches a little past the icon, so nothing of it gets clipped */
     CGRect area = CGRectInset(b, -pad, -pad);
-    CGPoint at = CGPointMake(pad + b.size.width - ceil(ts.width), pad + b.size.height - 0.3 - font.ascender);
+    CGFloat baseline = pad + b.size.height / 2 + font.capHeight / 2;
+    CGPoint at = CGPointMake(pad + b.size.width / 2 - (ink.origin.x + ink.size.width / 2), baseline - font.ascender);
+    /* How far the outline, and the gap cut in the arcs, reach past the letters
+     * (points), as stroke widths: % of the font size, and a stroke is centred
+     * on the letters' edges, so half of it is outside. */
+    NSNumber *outline = @(100 * 2 * 0.4 / font.pointSize), *gap = @(100 * 2 * 0.65 / font.pointSize);
 
     UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat preferredFormat];
     fmt.scale = scale;
     fmt.opaque = NO;
     UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:area.size format:fmt];
 
-    /* Amber with a thin dark outline (stroke widths are % of the font size). */
+    /* Yellow with a purple outline: stands out on dark, light and coloured bars. */
     UIImage *label = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
         [text drawAtPoint:at withAttributes:@{ NSFontAttributeName: font,
                                                NSForegroundColorAttributeName: UIColor.clearColor,
-                                               NSStrokeColorAttributeName: [UIColor colorWithWhite:0 alpha:0.9],
-                                               NSStrokeWidthAttributeName: @15 }];
+                                               NSStrokeColorAttributeName: [UIColor colorWithRed:0.345 green:0.110 blue:0.529 alpha:1.0],
+                                               NSStrokeWidthAttributeName: outline }];
         [text drawAtPoint:at withAttributes:fill];
     }];
     /* The mask: everything shows except a thin ring round the text. */
@@ -113,11 +143,11 @@ static void wtApply(UIView *v)
         CGContextSetBlendMode(ctx.CGContext, kCGBlendModeClear);
         [text drawAtPoint:at withAttributes:@{ NSFontAttributeName: font, NSForegroundColorAttributeName: UIColor.blackColor,
                                                NSStrokeColorAttributeName: UIColor.blackColor,
-                                               NSStrokeWidthAttributeName: @-26 }];
+                                               NSStrokeWidthAttributeName: @(-gap.doubleValue) }];
         CGContextSetBlendMode(ctx.CGContext, kCGBlendModeNormal);
         [text drawAtPoint:at withAttributes:@{ NSFontAttributeName: font, NSForegroundColorAttributeName: UIColor.blackColor,
                                                NSStrokeColorAttributeName: UIColor.blackColor,
-                                               NSStrokeWidthAttributeName: @-15 }];
+                                               NSStrokeWidthAttributeName: @(-outline.doubleValue) }];
     }];
     if (!label.CGImage || !mask.CGImage) {
         wtRemove(v);
