@@ -275,6 +275,11 @@ static NSString *logText(void)
     if (vpn.length)
         [t appendFormat:@"===== vpn.log (end) =====\n%@\n",
                         vpn.length > 100000 ? [vpn substringFromIndex:vpn.length - 100000] : vpn];
+    /* Temporary (1.6 test builds): what SpringBoard has for the hotspot
+     * indicator (src/bar/diag.m). */
+    NSString *sb = readText([WT_DIR stringByAppendingPathComponent:@"springboard-diag.txt"]);
+    if (sb.length)
+        [t appendFormat:@"===== springboard-diag.txt =====\n%@\n", sb];
     return t;
 }
 

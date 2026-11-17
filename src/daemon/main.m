@@ -2788,6 +2788,36 @@ static void misLog(void)
         return;
     last = s;
     NSLog(@"wifitetherd: hotspot service reports: %@", s);
+
+    /* Temporary (1.6 test builds): tells the status bar add-on in SpringBoard
+     * to note its tethering state now (src/bar/diag.m). */
+    static int tok = -1;
+    id cur = [d[@"Hosts"] isKindOfClass:[NSDictionary class]] ? d[@"Hosts"][@"Current"] : nil;
+    if (tok >= 0 || notify_register_check("com.wifitether.hotspot", &tok) == NOTIFY_STATUS_OK) {
+        notify_set_state(tok, [cur respondsToSelector:@selector(unsignedLongLongValue)] ? [cur unsignedLongLongValue] : 0);
+        notify_post("com.wifitether.hotspot");
+    }
+}
+
+/* Temporary (1.6 test builds): what iOS's hotspot service (misd) has to do
+ * with the status bar's indicators: which of these names its program file
+ * contains. Read only, once at start. */
+static void misdDiag(void)
+{
+    NSData *d = [NSData dataWithContentsOfFile:@"/usr/libexec/misd" options:NSDataReadingMappedIfSafe error:nil];
+    if (!d) {
+        NSLog(@"wifitetherd: diag: can't read /usr/libexec/misd");
+        return;
+    }
+    NSMutableArray *has = [NSMutableArray array], *missing = [NSMutableArray array];
+    for (NSString *m in @[@"SystemStatus.framework", @"SpringBoardServices.framework", @"background-activity",
+                          @"BackgroundActivit", @"StatusBarStyleOverride", @"STStatusBar", @"SBSStatusBar",
+                          @"Tethering", @"tethering", @"Hosts", @"USB-Ethernet"]) {
+        NSRange r = [d rangeOfData:[m dataUsingEncoding:NSUTF8StringEncoding] options:0 range:NSMakeRange(0, d.length)];
+        [(r.location != NSNotFound ? has : missing) addObject:m];
+    }
+    NSLog(@"wifitetherd: diag: misd contains: %@; doesn't: %@", [has componentsJoinedByString:@", "],
+          [missing componentsJoinedByString:@", "]);
 }
 
 static void reconcile(void)
@@ -3170,6 +3200,7 @@ int main(int argc, char **argv)
         /* Created suspended; reconcile() resumes it while the switch is on. */
 
         NSLog(@"wifitetherd: started");
+        misdDiag();
         reconcile();
     }
     /* Apple's hotspot and Wi-Fi code answers through the main run loop

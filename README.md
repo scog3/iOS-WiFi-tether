@@ -50,7 +50,7 @@ like a captive portal you've already signed in to on the phone.
 
 **See it at a glance**
 
-- **Band on the Wi-Fi icon.** **2.4**, **5** or **6** in yellow over the status bar's Wi-Fi
+- **Band on the Wi-Fi icon.** **2.4**, **5** or **6** over the status bar's Wi-Fi
   icon, in every app: the band it's actually on, whatever the switches say. On
   by default; switch it off in Settings.
 - **Status notification.** An optional quiet notification in Notification Centre with the
@@ -334,8 +334,10 @@ root) fills that gap whenever sharing is on:
 7. **Band on the Wi-Fi icon.** Since iOS 13 every app draws its own status bar, so a
    small add-on (`src/bar`) loads into every app that uses UIKit, SpringBoard included.
    It keeps iOS's own icon as it is and adds one layer on top of
-   `_UIStatusBarWifiSignalView` (its only hook is that view's `layoutSubviews`), plus a
-   mask that cuts the small gap round the text. If that view isn't there on some iOS
+   `_UIStatusBarWifiSignalView` (its only hooks are that view's `layoutSubviews` and
+   `applyStyleAttributes:`, for when the status bar's colours change), plus a mask that
+   cuts the small gap round the text. Its colours follow the icon's: yellow with a black
+   outline on white icons, violet with a white outline on black ones. If that view isn't there on some iOS
    version, it does nothing. `wifitetherd` publishes the band on the Darwin notification
    `com.wifitether.band`, so switching it off in Settings takes it away everywhere at once.
    Like the hand-over add-on, it's built for arm64 and arm64e.

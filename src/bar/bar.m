@@ -1,17 +1,21 @@
 /*
  * WiFiTetherBar: the Wi-Fi band on the status bar's Wi-Fi icon ("2.4", "5",
- * "6"), in yellow with a deep purple outline, centred over the icon: "2.4" is as
- * wide as the icon's top arc (tip to tip), and "5" and "6" are the same size.
- * A small gap is cut round the text so the arcs stay readable.
+ * "6"), centred over the icon. "2.4" is as wide as the icon's top arc (tip to
+ * tip); "5" and "6" are bigger, most of the icon's height. The colours follow
+ * the status bar's own: where its icons are white (dark bars, wallpapers, the
+ * blue, green and red bars), yellow with a black outline; where they're black
+ * (light bars), violet with a white outline. A small gap is cut round the
+ * text so the arcs stay readable.
  *
  * Since iOS 13 every app draws its own status bar, so this add-on loads into
  * every app that uses UIKit (and SpringBoard, for the home and lock screens).
  * It keeps iOS's own icon as it is and adds one layer on top of it, plus a
  * mask for the gap. It touches nothing else:
- *   - one method: -[_UIStatusBarWifiSignalView layoutSubviews], which still
- *     runs as before; after it, the label is added or updated;
- *   - if that class or method isn't there (another iOS version), it does
- *     nothing at all.
+ *   - two methods of _UIStatusBarWifiSignalView: layoutSubviews and
+ *     applyStyleAttributes: (the status bar's colours changed), which still
+ *     run as before; after them, the label is added or updated;
+ *   - if that class or layoutSubviews isn't there (another iOS version), it
+ *     does nothing at all.
  *
  * The band comes from wifitetherd, on the Darwin notification
  * com.wifitether.band: state = (label switched on ? 0x100 : 0) | band, with
@@ -29,6 +33,7 @@
 
 static Class        g_cls;
 static IMP          g_origLayout;        /* the class's own layoutSubviews, if it has one */
+static IMP          g_origStyle;         /* and applyStyleAttributes: */
 static int          g_band;              /* 0 none, 2, 5, 6 */
 static int          g_show;              /* the label is switched on in the app */
 static NSHashTable *g_views;             /* the Wi-Fi icons seen, to update when the band changes */
@@ -79,13 +84,35 @@ static CGRect wtInk(NSString *text, UIFont *font)
     return r;
 }
 
-/* The size that makes "2.4" as wide as the icon; the same for every label. */
-static UIFont *wtFont(CGSize icon)
+/* "2.4": as wide as the icon. "5" and "6": digits 86% of the icon's height
+ * (no wider than the icon). */
+static UIFont *wtFont(NSString *text, CGSize icon)
 {
     UIFont *ref = [UIFont systemFontOfSize:10 weight:UIFontWeightBold];
-    CGFloat size = 10 * icon.width / wtInk(@"2.4", ref).size.width;
-    size = MIN(size, icon.height * 1.2);   /* digits no taller than the icon */
+    CGFloat byWidth = 10 * icon.width / wtInk(text, ref).size.width;
+    CGFloat size = byWidth;
+    if (text.length == 1)
+        size = MIN(byWidth, 10 * icon.height * 0.86 / ref.capHeight);
+    size = MIN(size, 10 * icon.height / ref.capHeight);   /* digits no taller than the icon */
     return [UIFont systemFontOfSize:MAX(5.0, round(size * 4) / 4) weight:UIFontWeightBold];
+}
+
+/* Are the status bar's icons white (dark or coloured bar) or black (light
+ * bar)? From the Wi-Fi icon's own colour. */
+static BOOL wtLightIcons(UIView *v)
+{
+    UIColor *c = nil;
+    CGFloat r, g, b, a, white;
+    SEL active = NSSelectorFromString(@"activeColor");   /* _UIStatusBarSignalView's bar colour */
+    if ([v respondsToSelector:active])
+        c = ((UIColor * (*)(id, SEL))objc_msgSend)(v, active);
+    if (![c isKindOfClass:[UIColor class]])
+        c = v.tintColor;
+    if ([c getRed:&r green:&g blue:&b alpha:&a])
+        return 0.299 * r + 0.587 * g + 0.114 * b > 0.5;
+    if ([c getWhite:&white alpha:&a])
+        return white > 0.5;
+    return YES;
 }
 
 /* Draws the label (and the mask that cuts the gap) for this icon's size. */
@@ -103,16 +130,18 @@ static void wtApply(UIView *v)
         return;
     }
     CGFloat scale = v.window.screen.scale > 0 ? v.window.screen.scale : UIScreen.mainScreen.scale;
-    NSString *key = [NSString stringWithFormat:@"%@|%.2f|%.2f|%.1f", text, b.size.width, b.size.height, scale];
+    BOOL light = wtLightIcons(v);
+    NSString *key = [NSString stringWithFormat:@"%@|%.2f|%.2f|%.1f|%d", text, b.size.width, b.size.height, scale, light];
     if ([objc_getAssociatedObject(v, kWTKey) isEqualToString:key] && wtOverlay(v))
         return;
 
-    /* The text: "2.4" as wide as the icon (its widest point, the top arc's
-     * tips), "5" and "6" the same size; centred on the icon, digits halfway
-     * up it. */
-    UIFont *font = wtFont(b.size);
-    NSDictionary *fill = @{ NSFontAttributeName: font,
-                            NSForegroundColorAttributeName: [UIColor colorWithRed:1.0 green:0.839 blue:0.039 alpha:1.0] };
+    /* Centred on the icon, digits halfway up it. White icons: yellow, black
+     * outline. Black icons: violet, white outline. */
+    UIFont *font = wtFont(text, b.size);
+    UIColor *textColor = light ? [UIColor colorWithRed:1.0 green:0.839 blue:0.039 alpha:1.0]
+                               : [UIColor colorWithRed:0.427 green:0.157 blue:0.851 alpha:1.0];
+    UIColor *lineColor = light ? UIColor.blackColor : UIColor.whiteColor;
+    NSDictionary *fill = @{ NSFontAttributeName: font, NSForegroundColorAttributeName: textColor };
     CGRect ink = wtInk(text, font);
     CGFloat pad = 4;   /* the mask reaches a little past the icon, so nothing of it gets clipped */
     CGRect area = CGRectInset(b, -pad, -pad);
@@ -128,11 +157,11 @@ static void wtApply(UIView *v)
     fmt.opaque = NO;
     UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:area.size format:fmt];
 
-    /* Yellow with a purple outline: stands out on dark, light and coloured bars. */
+    /* The text with its outline. */
     UIImage *label = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
         [text drawAtPoint:at withAttributes:@{ NSFontAttributeName: font,
                                                NSForegroundColorAttributeName: UIColor.clearColor,
-                                               NSStrokeColorAttributeName: [UIColor colorWithRed:0.345 green:0.110 blue:0.529 alpha:1.0],
+                                               NSStrokeColorAttributeName: lineColor,
                                                NSStrokeWidthAttributeName: outline }];
         [text drawAtPoint:at withAttributes:fill];
     }];
@@ -192,6 +221,23 @@ static void wtLayout(UIView *self, SEL _cmd)
     }
 }
 
+/* The status bar's colours changed (light bar to dark, a blue or green bar
+ * appeared...): redraw in the matching colours. */
+static void wtStyle(UIView *self, SEL _cmd, id attrs)
+{
+    if (g_origStyle) {
+        ((void (*)(UIView *, SEL, id))g_origStyle)(self, _cmd, attrs);
+    } else {
+        struct objc_super sup = { self, class_getSuperclass(g_cls) };
+        ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&sup, _cmd, attrs);
+    }
+    @try {
+        if ([g_views containsObject:self])
+            wtApply(self);
+    } @catch (NSException *e) {
+    }
+}
+
 static void wtSetState(uint64_t st)
 {
     int show = (st & 0x100) != 0, band = (int)(st & 0xff);
@@ -207,6 +253,10 @@ static void wtSetState(uint64_t st)
     }
 }
 
+/* Temporary, for the 1.6 test builds: why iOS's blue hotspot indicator
+ * doesn't show (see diag.m). */
+#include "diag.m"
+
 __attribute__((constructor)) static void wtBarInit(void)
 {
     SEL sel = @selector(layoutSubviews);
@@ -214,6 +264,10 @@ __attribute__((constructor)) static void wtBarInit(void)
     int tok = -1;
     uint64_t st = 0;
 
+    @try {
+        wtDiagStart();
+    } @catch (NSException *e) {
+    }
     g_cls = objc_getClass("_UIStatusBarWifiSignalView");
     if (!g_cls || !(m = class_getInstanceMethod(g_cls, sel)))
         return;
@@ -232,4 +286,14 @@ __attribute__((constructor)) static void wtBarInit(void)
         g_origLayout = NULL;
     else
         g_origLayout = method_setImplementation(m, (IMP)wtLayout);
+
+    /* Colour changes. Optional: without it the colours update at the next
+     * layout instead. */
+    sel = NSSelectorFromString(@"applyStyleAttributes:");
+    if ((m = class_getInstanceMethod(g_cls, sel))) {
+        if (class_addMethod(g_cls, sel, (IMP)wtStyle, method_getTypeEncoding(m)))
+            g_origStyle = NULL;
+        else
+            g_origStyle = method_setImplementation(m, (IMP)wtStyle);
+    }
 }

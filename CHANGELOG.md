@@ -5,9 +5,10 @@
 **See what's on without opening the app**
 
 - **Band on the Wi-Fi icon:** **2.4**, **5** or **6** (6 GHz) over the status bar's Wi-Fi
-  icon (2.4 as wide as the icon), in yellow with a deep purple outline, in every app. It shows the
-  band Wi-Fi is actually on, not what the switches are set to. On by default. Respring
-  once after installing for it to appear.
+  icon (2.4 as wide as the icon, 5 and 6 bigger), in every app. The colours follow the
+  status bar: yellow with a black outline where its icons are white, violet with a white
+  outline where they're black. It shows the band Wi-Fi is actually on, not what the
+  switches are set to. On by default. Respring once after installing for it to appear.
 - **Status notification** (optional): one quiet notification in Notification Centre with
   the band and what's switched on, for example *5 GHz Wi-Fi · Force 5 GHz on* and *Sharing
   VPN over USB*. No sound or banner; it updates by itself and only shows while sharing or a
