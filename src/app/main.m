@@ -7,6 +7,7 @@
 #include <sys/sysctl.h>
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
+#include "../common/bandicon.h"   /* the band icon's shape, the same as on the status bar */
 #import <objc/message.h>
 #include <notify.h>
 #include <dlfcn.h>
@@ -19,7 +20,8 @@
 #define WT_NOTIFY   "com.wifitether.changed"
 #define WT_RECONNECT "com.wifitether.reconnect"   /* restarts the tries to reach the computer */
 #define WT_BANDLABEL  WT_DIR @"/band-label"            /* "0": no band on the Wi-Fi icon */
-#define WT_STATUSNOTE WT_DIR @"/status-notification"   /* "1": the status notification is on */
+#define WT_STATUSNOTE WT_DIR @"/status-notification"   /* "0": no status notification */
+#define WT_SETUP      WT_DIR @"/setup-done"            /* the welcome screen has been answered */
 #define WT_SUMMARY    WT_DIR @"/summary.plist"         /* what it says, written by wifitetherd */
 #define WT_REPO       @"https://github.com/scog3/iOS-WiFi-tether"
 
@@ -106,10 +108,10 @@ static BOOL bandLabelOn(void)   /* on unless switched off */
     return s == nil || ![s hasPrefix:@"0"];
 }
 
-static BOOL statusNoteOn(void)
+static BOOL statusNoteOn(void)   /* on unless switched off */
 {
     NSString *s = [NSString stringWithContentsOfFile:WT_STATUSNOTE encoding:NSUTF8StringEncoding error:nil];
-    return [s hasPrefix:@"1"];
+    return s == nil || ![s hasPrefix:@"0"];
 }
 
 /* ── The status notification ────────────────────────────────────────────
@@ -121,6 +123,7 @@ static BOOL statusNoteOn(void)
  * next change starts it afresh. */
 static NSDictionary *g_posted;   /* what's in Notification Centre, as far as this run knows */
 static BOOL          g_cleared;  /* removed once in this run */
+static BOOL          g_asked;    /* asked iOS for notifications in this run */
 
 static void updateStatusNotification(void (^done)(void))
 {
@@ -140,6 +143,15 @@ static void updateStatusNotification(void (^done)(void))
     if ([sum isEqualToDictionary:g_posted]) {
         if (done)
             done();
+        return;
+    }
+    if (!g_asked) {   /* once per run, before the first one (no question shows: see wtAskNotifications) */
+        g_asked = YES;
+        [c requestAuthorizationWithOptions:UNAuthorizationOptionAlert completionHandler:^(BOOL granted, NSError *e) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                updateStatusNotification(done);
+            });
+        }];
         return;
     }
     UNMutableNotificationContent *n = [UNMutableNotificationContent new];
@@ -227,6 +239,74 @@ static void wtScrollPage(UIViewController *vc, UIStackView *stack)
     NSLayoutConstraint *fill = [stack.widthAnchor constraintEqualToAnchor:safe.widthAnchor constant:-32];
     fill.priority = UILayoutPriorityRequired - 1;
     fill.active = YES;
+}
+
+/* A grey note under a card, lined up with the text in it. */
+static UIView *wtFooter(NSString *text)
+{
+    UILabel *l = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    l.text = text;
+    UIView *box = [UIView new];
+    l.translatesAutoresizingMaskIntoConstraints = NO;
+    [box addSubview:l];
+    [NSLayoutConstraint activateConstraints:@[
+        [l.topAnchor constraintEqualToAnchor:box.topAnchor],
+        [l.bottomAnchor constraintEqualToAnchor:box.bottomAnchor],
+        [l.leadingAnchor constraintEqualToAnchor:box.leadingAnchor constant:16],
+        [l.trailingAnchor constraintEqualToAnchor:box.trailingAnchor constant:-16],
+    ]];
+    return box;
+}
+
+/* ── Asking for notifications ───────────────────────────────────────────
+ * Jailbreak apps are "system" apps to iOS, so there's no "Allow
+ * Notifications?" question: iOS lists the app in Settings → Notifications
+ * (Info.plist's SBAppUsesLocalNotifications) and this just says whether
+ * they're allowed there. done runs on the main queue. */
+static void wtAskNotifications(void (^done)(BOOL ok, NSError *error))
+{
+    UNUserNotificationCenter *nc = UNUserNotificationCenter.currentNotificationCenter;
+    [nc requestAuthorizationWithOptions:UNAuthorizationOptionAlert completionHandler:^(BOOL granted, NSError *error) {
+        [nc getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *ns) {
+            BOOL ok = granted || ns.authorizationStatus == UNAuthorizationStatusAuthorized ||
+                      ns.authorizationStatus == UNAuthorizationStatusProvisional;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                done(ok, error);
+            });
+        }];
+    }];
+}
+
+/* Not allowed: either switched off for this app in Settings, or iOS hasn't
+ * listed the app there yet (it does that when the app is installed). */
+static void wtNotificationsOffAlert(UIViewController *vc, NSError *error)
+{
+    NSLog(@"WiFiTether: notifications not allowed (%@ %ld)", error.domain, (long)error.code);
+    UIAlertController *a = [UIAlertController
+        alertControllerWithTitle:@"Notifications are off"
+                         message:@"Turn on Allow Notifications in Settings → Notifications → Tether & Band, then turn "
+                                 @"on Status notification again (☰ → Settings).\n\nNot in the list? Respring and try "
+                                 @"again. If it's still missing, reboot userspace in your jailbreak app (Dopamine: "
+                                 @"Reboot Userspace)."
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Open Settings" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *x) {
+            NSString *url = UIApplicationOpenSettingsURLString;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+            /* iOS 15.4 and newer: straight to this app's notifications */
+            if ([NSProcessInfo.processInfo isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){15, 4, 0}] &&
+                &UIApplicationOpenNotificationSettingsURLString != NULL)
+                url = UIApplicationOpenNotificationSettingsURLString;
+#pragma clang diagnostic pop
+            [UIApplication.sharedApplication openURL:[NSURL URLWithString:url] options:@{} completionHandler:^(BOOL ok) {
+                if (!ok)
+                    [UIApplication.sharedApplication openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString]
+                                                     options:@{} completionHandler:nil];
+            }];
+        }]];
+    [vc presentViewController:a animated:YES completion:nil];
 }
 
 static NSString *appVersion(void)
@@ -444,56 +524,15 @@ static NSString *logText(void)
         updateStatusNotification(nil);   /* takes it away */
         return;
     }
-    /* Jailbreak apps are "system" apps to iOS, so there's no "Allow
-     * Notifications?" question: iOS lists the app in Settings → Notifications
-     * (Info.plist's SBAppUsesLocalNotifications) and this just says whether
-     * they're allowed there. */
-    UNUserNotificationCenter *nc = UNUserNotificationCenter.currentNotificationCenter;
-    [nc requestAuthorizationWithOptions:UNAuthorizationOptionAlert completionHandler:^(BOOL granted, NSError *error) {
-        [nc getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *ns) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (granted || ns.authorizationStatus == UNAuthorizationStatusAuthorized ||
-                    ns.authorizationStatus == UNAuthorizationStatusProvisional) {
-                    writeSetting(WT_STATUSNOTE, YES);
-                    updateStatusNotification(nil);
-                    return;
-                }
-                [self->_note setOn:NO animated:YES];
-                [self notificationsOff:error];
-            });
-        }];
-    }];
-}
-
-/* Not allowed: either switched off for this app in Settings, or iOS hasn't
- * listed the app there yet (it does that when the app is installed). */
-- (void)notificationsOff:(NSError *)error
-{
-    NSLog(@"WiFiTether: notifications not allowed (%@ %ld)", error.domain, (long)error.code);
-    UIAlertController *a = [UIAlertController
-        alertControllerWithTitle:@"Notifications are off"
-                         message:@"Turn on Allow Notifications in Settings → Notifications → Tether & Band, then turn "
-                                 @"this on again.\n\nNot in the list? Respring and try again. If it's still missing, "
-                                 @"reboot userspace in your jailbreak app (Dopamine: Reboot Userspace)."
-                  preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [a addAction:[UIAlertAction actionWithTitle:@"Open Settings" style:UIAlertActionStyleDefault
-        handler:^(UIAlertAction *x) {
-            NSString *url = UIApplicationOpenSettingsURLString;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunguarded-availability-new"
-            /* iOS 15.4 and newer: straight to this app's notifications */
-            if ([NSProcessInfo.processInfo isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){15, 4, 0}] &&
-                &UIApplicationOpenNotificationSettingsURLString != NULL)
-                url = UIApplicationOpenNotificationSettingsURLString;
-#pragma clang diagnostic pop
-            [UIApplication.sharedApplication openURL:[NSURL URLWithString:url] options:@{} completionHandler:^(BOOL ok) {
-                if (!ok)
-                    [UIApplication.sharedApplication openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString]
-                                                     options:@{} completionHandler:nil];
-            }];
-        }]];
-    [self presentViewController:a animated:YES completion:nil];
+    wtAskNotifications(^(BOOL ok, NSError *error) {
+        writeSetting(WT_STATUSNOTE, ok);
+        if (ok) {
+            updateStatusNotification(nil);
+            return;
+        }
+        [self->_note setOn:NO animated:YES];
+        wtNotificationsOffAlert(self, error);
+    });
 }
 
 @end
@@ -603,6 +642,273 @@ static NSString *logText(void)
 {
     [UIApplication.sharedApplication openURL:[NSURL URLWithString:WT_REPO @"/issues"] options:@{}
                            completionHandler:nil];
+}
+
+@end
+
+/* ── Welcome screen ─────────────────────────────────────────────────────
+ * Shown once, the first time the app opens after installing (until
+ * Continue): the two ways to see the band without opening the app, each
+ * with a preview and a switch, both on to start with. Settings changes them
+ * later. Nothing about USB tethering or the Share tweak here: that's on the
+ * main screen, for whoever wants it. */
+
+/* The band icon as the status bar shows it, drawn by the same code
+ * (bandicon.h), `scale` times its real size; a template, so it takes the
+ * tint like an SF Symbol. */
+static UIImage *wtBandIconImage(NSString *text, CGFloat scale)
+{
+    CGSize box = CGSizeMake(round(15.33 * scale), round(11 * scale));
+    UIGraphicsImageRendererFormat *f = [UIGraphicsImageRendererFormat preferredFormat];
+    f.opaque = NO;
+    UIImage *im = [[[UIGraphicsImageRenderer alloc] initWithSize:box format:f]
+        imageWithActions:^(UIGraphicsImageRendererContext *c) {
+            wtDrawShape(CGRectMake(0, 0, box.width, box.height), text, 3, 1, 0.3);
+        }];
+    return [im imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+}
+
+/* A status bar, a bit bigger than life: the time, and the new Wi-Fi icon
+ * next to the battery. */
+static UIView *wtStatusBarPreview(void)
+{
+    UIView *bar = [UIView new];
+    bar.backgroundColor = UIColor.blackColor;
+    bar.layer.cornerRadius = 12;
+    bar.layer.cornerCurve = kCACornerCurveContinuous;
+    UILabel *time = wtLabel(17, UIFontWeightSemibold, UIColor.whiteColor);
+    time.text = @"9:41";
+    time.numberOfLines = 1;
+    UIImageView *icon = [[UIImageView alloc] initWithImage:wtBandIconImage(@"5", 1.7)];
+    icon.tintColor = UIColor.whiteColor;
+    UIImageView *batt = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"battery.100"
+        withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:22 weight:UIImageSymbolWeightRegular]]];
+    batt.tintColor = UIColor.whiteColor;
+    UIStackView *right = [[UIStackView alloc] initWithArrangedSubviews:@[icon, batt]];
+    right.spacing = 8;
+    right.alignment = UIStackViewAlignmentCenter;
+    for (UIView *v in @[time, right]) {
+        v.translatesAutoresizingMaskIntoConstraints = NO;
+        [bar addSubview:v];
+    }
+    icon.accessibilityLabel = @"Wi-Fi icon showing 5 under the signal arcs";
+    [NSLayoutConstraint activateConstraints:@[
+        [bar.heightAnchor constraintEqualToConstant:46],
+        [time.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor constant:18],
+        [time.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
+        [right.trailingAnchor constraintEqualToAnchor:bar.trailingAnchor constant:-16],
+        [right.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
+    ]];
+    return bar;
+}
+
+/* What the status notification looks like in Notification Centre. */
+static UIView *wtNotificationPreview(void)
+{
+    UIView *n = [UIView new];
+    n.backgroundColor = UIColor.tertiarySystemGroupedBackgroundColor;
+    n.layer.cornerRadius = 13;
+    n.layer.cornerCurve = kCACornerCurveContinuous;
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"AppIcon60x60"]];
+    icon.layer.cornerRadius = 4.5;
+    icon.layer.masksToBounds = YES;
+    [icon.widthAnchor constraintEqualToConstant:20].active = YES;
+    [icon.heightAnchor constraintEqualToConstant:20].active = YES;
+    UILabel *app = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    app.text = @"TETHER & BAND";
+    app.numberOfLines = 1;
+    UILabel *when = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    when.text = @"now";
+    when.numberOfLines = 1;
+    [when setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    UIStackView *head = [[UIStackView alloc] initWithArrangedSubviews:@[icon, app, when]];
+    head.spacing = 7;
+    head.alignment = UIStackViewAlignmentCenter;
+    UILabel *title = wtLabel(15, UIFontWeightSemibold, UIColor.labelColor);
+    title.text = @"Wi-Fi band: 5 GHz";
+    UILabel *body = wtLabel(15, UIFontWeightRegular, UIColor.labelColor);
+    body.text = @"USB sharing: ON\nVPN pass-through: OFF\nForce band: 5 GHz";
+    UIStackView *s = [[UIStackView alloc] initWithArrangedSubviews:@[head, title, body]];
+    s.axis = UILayoutConstraintAxisVertical;
+    s.spacing = 1;
+    [s setCustomSpacing:7 afterView:head];
+    s.translatesAutoresizingMaskIntoConstraints = NO;
+    [n addSubview:s];
+    [NSLayoutConstraint activateConstraints:@[
+        [s.topAnchor constraintEqualToAnchor:n.topAnchor constant:11],
+        [s.bottomAnchor constraintEqualToAnchor:n.bottomAnchor constant:-12],
+        [s.leadingAnchor constraintEqualToAnchor:n.leadingAnchor constant:13],
+        [s.trailingAnchor constraintEqualToAnchor:n.trailingAnchor constant:-13],
+    ]];
+    return n;
+}
+
+@interface WTWelcomeController : UIViewController
+@end
+
+@implementation WTWelcomeController {
+    UISwitch *_label;
+    UISwitch *_note;
+    UIView   *_labelPreview;
+    UIView   *_notePreview;
+    UIButton *_go;
+}
+
+/* One option: its name with a short line under it and the switch beside
+ * them, then the preview and, if there is one, a warning. Compact, so both
+ * options fit on the screen of an iPhone 6s/7/8 without scrolling. */
+- (UIView *)option:(NSString *)name detail:(NSString *)detail on:(UISwitch *)sw preview:(UIView *)preview
+           warning:(NSString *)warning
+{
+    UILabel *t = wtLabel(17, UIFontWeightSemibold, UIColor.labelColor);
+    t.text = name;
+    UILabel *d = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    d.text = detail;
+    UIStackView *names = [[UIStackView alloc] initWithArrangedSubviews:@[t, d]];
+    names.axis = UILayoutConstraintAxisVertical;
+    names.spacing = 1;
+    UIStackView *top = [[UIStackView alloc] initWithArrangedSubviews:@[names, sw]];
+    top.alignment = UIStackViewAlignmentCenter;
+    top.spacing = 12;
+    [sw setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    NSMutableArray *rows = [NSMutableArray arrayWithObjects:top, preview, nil];
+    if (warning) {
+        UIImageView *sign = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"exclamationmark.triangle.fill"
+            withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:13 weight:UIImageSymbolWeightSemibold]]];
+        sign.tintColor = UIColor.systemOrangeColor;
+        [sign setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [sign setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        UILabel *w = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+        w.text = warning;
+        UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[sign, w]];
+        row.spacing = 8;
+        row.alignment = UIStackViewAlignmentFirstBaseline;
+        [rows addObject:row];
+    }
+    UIView *card = wtCard(rows);
+    UIStackView *inner = (UIStackView *)card.subviews.firstObject;
+    inner.spacing = 12;
+    return card;
+}
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.modalInPresentation = YES;   /* answered with Continue, not swiped away */
+
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"AppIcon60x60"]];
+    icon.layer.cornerRadius = 13;
+    icon.layer.cornerCurve = kCACornerCurveContinuous;
+    icon.layer.masksToBounds = YES;
+    icon.contentMode = UIViewContentModeScaleAspectFit;
+    [icon.widthAnchor constraintEqualToConstant:44].active = YES;
+    [icon.heightAnchor constraintEqualToConstant:44].active = YES;
+    icon.layer.cornerRadius = 10;
+    UIStackView *iconRow = [[UIStackView alloc] initWithArrangedSubviews:@[icon]];
+    iconRow.axis = UILayoutConstraintAxisVertical;
+    iconRow.alignment = UIStackViewAlignmentCenter;
+    UILabel *title = wtLabel(24, UIFontWeightBold, UIColor.labelColor);
+    title.text = @"Welcome to Tether & Band";
+    title.textAlignment = NSTextAlignmentCenter;
+    title.numberOfLines = 1;
+    title.adjustsFontSizeToFitWidth = YES;
+    title.minimumScaleFactor = 0.75;
+    UILabel *sub = wtLabel(15, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    sub.text = @"See your Wi-Fi band without opening the app. Change these later in Settings.";
+    sub.textAlignment = NSTextAlignmentCenter;
+
+    _label = [UISwitch new];
+    _label.on = bandLabelOn();
+    _note = [UISwitch new];
+    _note.on = statusNoteOn();
+    for (UISwitch *sw in @[_label, _note])
+        [sw addTarget:self action:@selector(switched) forControlEvents:UIControlEventValueChanged];
+    _labelPreview = wtStatusBarPreview();
+    _notePreview = wtNotificationPreview();
+
+    UIView *one = [self option:@"Band on the Wi-Fi icon" detail:@"2.4, 5 or 6 under the arcs, in every app"
+                            on:_label preview:_labelPreview
+                       warning:@"Banking apps and games that look for jailbreaks may spot it. Choicy can hide it."];
+    UIView *two = [self option:@"Status notification" detail:@"Quiet: no sound or banners"
+                            on:_note preview:_notePreview warning:nil];
+
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[iconRow, title, sub, one, two]];
+    stack.spacing = 14;
+    [stack setCustomSpacing:10 afterView:iconRow];
+    [stack setCustomSpacing:6 afterView:title];
+    [stack setCustomSpacing:20 afterView:sub];
+    wtScrollPage(self, stack);
+    UIScrollView *scroll = (UIScrollView *)stack.superview;
+
+    /* Continue stays at the bottom; the options scroll above it. */
+    _go = [UIButton buttonWithType:UIButtonTypeSystem];
+    [_go setTitle:@"Continue" forState:UIControlStateNormal];
+    [_go setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    _go.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    _go.backgroundColor = UIColor.systemBlueColor;
+    _go.layer.cornerRadius = 14;
+    _go.layer.cornerCurve = kCACornerCurveContinuous;
+    [_go addTarget:self action:@selector(done) forControlEvents:UIControlEventTouchUpInside];
+    UIView *bottom = [UIView new];
+    bottom.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    for (UIView *v in @[bottom, _go])
+        v.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:bottom];
+    [bottom addSubview:_go];
+    UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
+    for (NSLayoutConstraint *c in scroll.superview.constraints)   /* the page now ends at the button bar */
+        if ((c.firstItem == scroll && c.firstAttribute == NSLayoutAttributeBottom) ||
+            (c.secondItem == scroll && c.secondAttribute == NSLayoutAttributeBottom))
+            c.active = NO;
+    [NSLayoutConstraint activateConstraints:@[
+        [scroll.bottomAnchor constraintEqualToAnchor:bottom.topAnchor],
+        [bottom.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [bottom.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [bottom.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [_go.topAnchor constraintEqualToAnchor:bottom.topAnchor constant:12],
+        [_go.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-16],
+        [_go.heightAnchor constraintEqualToConstant:50],
+        [_go.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
+        [_go.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:16],
+        [_go.widthAnchor constraintLessThanOrEqualToConstant:540],
+    ]];
+    NSLayoutConstraint *wide = [_go.widthAnchor constraintEqualToAnchor:safe.widthAnchor constant:-32];
+    wide.priority = UILayoutPriorityRequired - 1;
+    wide.active = YES;
+    [self switched];
+}
+
+/* A switched-off option's preview fades, so it's clear what's on. */
+- (void)switched
+{
+    [UIView animateWithDuration:0.2 animations:^{
+        self->_labelPreview.alpha = self->_label.on ? 1 : 0.35;
+        self->_notePreview.alpha = self->_note.on ? 1 : 0.35;
+    }];
+}
+
+- (void)done
+{
+    writeSetting(WT_BANDLABEL, _label.on);
+    [@"1" writeToFile:WT_SETUP atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    if (!_note.on) {
+        writeSetting(WT_STATUSNOTE, NO);
+        updateStatusNotification(nil);   /* takes it away, if it was there */
+        [self dismissViewControllerAnimated:YES completion:nil];
+        return;
+    }
+    _go.enabled = NO;
+    wtAskNotifications(^(BOOL ok, NSError *error) {
+        writeSetting(WT_STATUSNOTE, ok);
+        UIViewController *under = self.presentingViewController;
+        [self dismissViewControllerAnimated:YES completion:^{
+            if (ok)
+                updateStatusNotification(nil);
+            else
+                wtNotificationsOffAlert(under, error);
+        }];
+    });
 }
 
 @end
@@ -897,8 +1203,8 @@ static NSString *logText(void)
         [menu.centerYAnchor constraintEqualToAnchor:title.firstBaselineAnchor constant:-round(title.font.capHeight / 2)],
     ]];
     UILabel *subtitle = [self labelWithSize:15 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
-    subtitle.text = [NSString stringWithFormat:@"Shares this %@'s Wi-Fi or VPN with a computer over USB, and "
-                                               @"keeps Wi-Fi on the band you choose.", deviceWord()];
+    subtitle.text = [NSString stringWithFormat:@"Keeps Wi-Fi on the band you choose, and shares this %@'s Wi-Fi "
+                                               @"or VPN with a computer over USB.", deviceWord()];
 
     UILabel *toggleLabel = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
     toggleLabel.text = @"Share Wi-Fi over USB";
@@ -938,23 +1244,35 @@ static NSString *logText(void)
     band24Row.alignment = UIStackViewAlignmentCenter;
     _band5Info = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
 
-    UILabel *help = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
-    help.text = [NSString stringWithFormat:
-                 @"USB tethering: connect this %1$@ to Wi-Fi, turn on Share Wi-Fi over USB, then plug the "
-                 @"%1$@ into the computer. The computer goes online through this %1$@'s Wi-Fi, or its VPN "
-                 @"when one is connected. Turning sharing off turns Personal Hotspot off.\n\n"
-                 @"USB tethering needs the Share tweak; the Wi-Fi band switches don't.", deviceWord()];
+    /* The two sections' notes: band switching works by itself; only USB
+     * tethering needs the Share tweak. */
+    UIView *bandFoot = wtFooter(@"Works on its own. No other tweaks needed.");
+    UIView *help = wtFooter([NSString stringWithFormat:
+                 @"Connect this %1$@ to Wi-Fi, turn on Share Wi-Fi over USB, then plug the %1$@ into the "
+                 @"computer. The computer goes online through this %1$@'s Wi-Fi, or its VPN when one is "
+                 @"connected. Turning sharing off turns Personal Hotspot off.", deviceWord()]);
 
-    /* Share tweak missing: say so first, with a button that opens Sileo. */
+    /* Share tweak missing: at the top of the tethering section, with a button
+     * that opens Sileo. */
+    UIImageView *piece = [[UIImageView alloc] initWithImage:
+        [UIImage systemImageNamed:@"puzzlepiece.extension.fill"] ?: [UIImage systemImageNamed:@"puzzlepiece.fill"]];
+    piece.tintColor = UIColor.systemOrangeColor;
+    piece.preferredSymbolConfiguration = [UIImageSymbolConfiguration configurationWithPointSize:20
+                                                                                         weight:UIImageSymbolWeightSemibold];
+    [piece setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     UILabel *shareTitle = [self labelWithSize:17 weight:UIFontWeightSemibold color:UIColor.labelColor];
-    shareTitle.text = @"USB sharing needs the Share tweak";
-    UILabel *shareText = [self labelWithSize:14 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
-    NSString *steps = @"Share turns on Personal Hotspot without a SIM. The Wi-Fi band switches below work without it.\n"
-                      @"1. Tap the button below. Sileo opens with Share's repo address filled in.\n"
-                      @"2. Tap Add Dist Repo, then Add (leave the other boxes empty).\n"
-                      @"3. Install Share from that repo.\n"
-                      @"4. Come back here. Tether & Band picks it up by itself.\n"
-                      @"Repo address: https://aminerostane.com/repo";
+    shareTitle.text = @"Get the Share tweak";
+    UILabel *shareWhy = [self labelWithSize:15 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
+    shareWhy.text = @"Only needed for USB tethering. Band switching above works without it.";
+    UIStackView *shareNames = [[UIStackView alloc] initWithArrangedSubviews:@[shareTitle, shareWhy]];
+    shareNames.axis = UILayoutConstraintAxisVertical;
+    shareNames.spacing = 2;
+    UIStackView *shareHead = [[UIStackView alloc] initWithArrangedSubviews:@[piece, shareNames]];
+    shareHead.spacing = 12;
+    shareHead.alignment = UIStackViewAlignmentCenter;
+    UILabel *shareText = [self labelWithSize:13 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor];
+    NSString *steps = @"Sileo opens with Share's repo filled in: tap Add Dist Repo, then Add, then install Share. "
+                      @"This screen updates by itself.\nRepo: https://aminerostane.com/repo";
     NSMutableAttributedString *as = [[NSMutableAttributedString alloc] initWithString:steps
         attributes:@{NSFontAttributeName: shareText.font, NSForegroundColorAttributeName: shareText.textColor}];
     /* the two Sileo buttons to tap, in bold */
@@ -962,7 +1280,7 @@ static NSString *logText(void)
     NSRange add = [steps rangeOfString:@"then Add"];
     add.location += 5; add.length = 3;
     for (NSValue *v in @[[NSValue valueWithRange:dist], [NSValue valueWithRange:add]])
-        [as addAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold],
+        [as addAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold],
                             NSForegroundColorAttributeName: UIColor.labelColor} range:v.rangeValue];
     shareText.attributedText = as;
     UIButton *getShare = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -973,7 +1291,7 @@ static NSString *logText(void)
     getShare.layer.cornerRadius = 10;
     [getShare.heightAnchor constraintEqualToConstant:44].active = YES;
     [getShare addTarget:self action:@selector(getShare) forControlEvents:UIControlEventTouchUpInside];
-    _shareCard = [self card:@[shareTitle, shareText, getShare]];
+    _shareCard = [self card:@[shareHead, getShare, shareText]];
     _shareCard.hidden = YES;
 
     _reconnect = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -986,30 +1304,35 @@ static NSString *logText(void)
     [_reconnect addTarget:self action:@selector(reconnect) forControlEvents:UIControlEventTouchUpInside];
     _reconnect.hidden = YES;
 
-    UILabel *tetherHeader = [self sectionHeader:@"USB tethering"];
+    UILabel *tetherHeader = [self sectionHeader:@"USB tethering · needs the Share tweak"];
     UILabel *band5Header = [self sectionHeader:@"Wi-Fi band"];
     UIView *statusCard = [self card:@[stateRow, _detail, _reconnect,
                                       [self row:@"Wi-Fi" value:_wifi],
                                       [self row:@"Hotspot / USB" value:_usb],
                                       [self row:@"DNS" value:_dns],
                                       [self row:@"VPN" value:_vpn]]];
+    /* Band switching first (works on its own), USB tethering below it. */
+    UIView *bandCard = [self card:@[band5Row, band24Row, _band5Info]];
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
         titleRow, subtitle,
+        band5Header,
+        bandCard,
+        bandFoot,
         tetherHeader,
         _shareCard,
         [self card:@[toggleRow]],
         statusCard,
-        band5Header,
-        [self card:@[band5Row, band24Row, _band5Info]],
         help,
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 16;
     [stack setCustomSpacing:6 afterView:titleRow];
     [stack setCustomSpacing:24 afterView:subtitle];
-    [stack setCustomSpacing:6 afterView:tetherHeader];
-    [stack setCustomSpacing:28 afterView:statusCard];
     [stack setCustomSpacing:6 afterView:band5Header];
+    [stack setCustomSpacing:8 afterView:bandCard];
+    [stack setCustomSpacing:30 afterView:bandFoot];
+    [stack setCustomSpacing:6 afterView:tetherHeader];
+    [stack setCustomSpacing:8 afterView:statusCard];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
 
     UIScrollView *scroll = [UIScrollView new];
@@ -1064,6 +1387,15 @@ static NSString *logText(void)
     [super viewWillDisappear:animated];
     [_timer invalidate];
     _timer = nil;
+}
+
+/* The first time after installing: the welcome screen. */
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    if (self.presentedViewController || [NSFileManager.defaultManager fileExistsAtPath:WT_SETUP])
+        return;
+    [self presentViewController:[WTWelcomeController new] animated:YES completion:nil];
 }
 
 - (BOOL)enabledSetting

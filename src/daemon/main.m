@@ -2543,7 +2543,7 @@ static void b5Update(void)
  *   - The band on the status bar's Wi-Fi icon (src/bar; on by default). The
  *     band is published on the Darwin notification com.wifitether.band:
  *     state = (switched on ? 0x100 : 0) | band (2, 5, 6; 0 none).
- *   - A quiet notification in Notification Centre (off by default): the band
+ *   - A quiet notification in Notification Centre (on by default): the band
  *     and what's switched on. Only the app can post notifications, so this
  *     writes the summary (summary.plist) and, when it changes, starts the app
  *     in the background to post it (SpringBoardServices, the way the "open"
@@ -2552,7 +2552,7 @@ static void b5Update(void)
  * socket the band switches use) and every 30 seconds in case one is missed.
  * ------------------------------------------------------------------------- */
 #define WT_BANDLABEL   WT_DIR "/band-label"            /* "0": off; otherwise on */
-#define WT_STATUSNOTE  WT_DIR "/status-notification"   /* "1": on */
+#define WT_STATUSNOTE  WT_DIR "/status-notification"   /* "0": off; otherwise on */
 #define WT_SUMMARY     WT_DIR "/summary.plist"
 #define WT_BAND_NOTIFY "com.wifitether.band"
 #define WT_APP_ID      "com.wifitether.app"
@@ -2723,19 +2723,24 @@ static void indEventSoon(void)
         });
 }
 
-/* The settings (from reconcile, which runs whenever the app changes one). */
-static void indUpdate(void)
+/* On unless the file says "0" (both settings are on by default). */
+static int indFlag(const char *path)
 {
     char c = 0;
-    FILE *f = fopen(WT_BANDLABEL, "r");
-    int label, note = b5ReadFlag(WT_STATUSNOTE);
-
+    FILE *f = fopen(path, "r");
     if (f) {
         if (fread(&c, 1, 1, f) != 1)
             c = 0;
         fclose(f);
     }
-    label = c != '0';
+    return c != '0';
+}
+
+/* The settings (from reconcile, which runs whenever the app changes one). */
+static void indUpdate(void)
+{
+    int label = indFlag(WT_BANDLABEL), note = indFlag(WT_STATUSNOTE);
+
     if (label == g_indLabel && note == g_indNote)
         return;
     NSLog(@"wifitetherd: band on the Wi-Fi icon: %s; status notification: %s", label ? "on" : "off", note ? "on" : "off");

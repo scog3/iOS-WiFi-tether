@@ -119,7 +119,8 @@ echo "$BAR_ARCHS" > "$B/bar-archs.txt"
 echo "== Building app"
 "$CLANG" "${CFLAGS[@]}" -fobjc-arc -c src/app/main.m -o "$B/app_main.o"
 "$CLANG" "${CFLAGS[@]}" "${LDFLAGS[@]}" "$B/app_main.o" \
-    -framework UIKit -framework UserNotifications -framework CoreGraphics -framework Foundation -o "$B/WiFiTether"
+    -framework UIKit -framework UserNotifications -framework CoreGraphics -framework CoreText -framework QuartzCore \
+    -framework Foundation -o "$B/WiFiTether"
 
 echo "== Packaging"
 S="$B/stage"

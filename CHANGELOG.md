@@ -13,15 +13,22 @@
   it does when sharing mobile data. iOS only takes it from the phone's cellular service,
   which never says it's sharing when the hotspot shares Wi-Fi. Respring once after
   installing.
-- **Status notification** (optional): one quiet notification in Notification Centre. The
+- **Status notification** (on by default): one quiet notification in Notification Centre. The
   title is the band Wi-Fi is on now (*Wi-Fi band: 5 GHz*), then three short lines: *USB
   sharing: ON*, *VPN pass-through: OFF*, *Force band: 5 GHz*. Always the same lines, so
   nothing jumps around. No sound or banner; it updates by itself.
 
 **App**
 
-- **Menu** (☰, top right, level with the title, or swipe in from the right edge) that slides out, with **Settings** (the two options above) and
-  **About** (short instructions, a link to GitHub, version, build and developer).
+- **Welcome screen** the first time the app opens: the two options above, each with a
+  preview (the new Wi-Fi icon, and the notification) and a switch, both on to start with,
+  plus a note on apps that check for jailbreaks. One tap on Continue and you're done.
+- **Main screen:** band switching first, USB tethering underneath, marked as the only part
+  that needs the Share tweak. Without Share, a short card in the tethering section says so,
+  with the button that adds Share's repo in Sileo.
+- **Menu** (☰, top right, level with the title, or swipe in from the right edge) that
+  slides out, with **Settings** (the two options above) and **About** (short instructions,
+  a link to GitHub, version, build and developer).
 - **Share or copy the log** from Settings: as a .txt file (AirDrop, Save to Files, Mail…)
   or onto the clipboard, with the version and device on top. No more Filza for that.
 
