@@ -50,7 +50,7 @@ cp -r "$HERE/screenshots" "$P/"
 TITLE_HTML="$(printf '%s' "$REPO_TITLE" | sed 's/&/\&amp;/g; s/</\&lt;/g')"
 SHOTS=""
 for s in welcome:"The welcome screen" tethering:"Sharing Wi-Fi and the VPN over USB, with Force 5 GHz on" \
-         band-switch:"Force 2.4 GHz on its own, with sharing off"; do
+         band-switch:"Force 2.4 GHz on its own; the band, 2.4, circled on the Wi-Fi icon"; do
     f="${s%%:*}.png"
     [ -e "$P/screenshots/$f" ] && SHOTS+="<img src=\"screenshots/$f\" alt=\"${s#*:}\">"
 done
@@ -63,8 +63,9 @@ code{background:rgba(127,127,127,.18);padding:2px 5px;border-radius:4px}a{color:
 .shots{display:flex;gap:8px}.shots img{width:calc(33.3% - 6px);max-width:180px;border-radius:10px}</style></head><body>
 <p><a href="../../">← ${TITLE_HTML}</a></p>
 <h1>WiFi Tether &amp; Band Switcher</h1>
-<p>Seamless USB tethering and Wi-Fi band control for jailbroken iPhones and iPads. Share your device's Wi-Fi or VPN with a computer over USB, and keep Wi-Fi on 5 GHz or 2.4 GHz even on routers that won't allow band splitting. USB tethering needs the Share tweak (the app adds its repo); band control works on its own. Rootless, iOS 15+.</p>
+<p>Seamless USB tethering and Wi-Fi band control for jailbroken iPhones and iPads. Share your device's Wi-Fi or VPN with a computer over USB, and keep Wi-Fi on 5 GHz or 2.4 GHz even on routers that won't allow band splitting. The Wi-Fi icon shows which band you're on. USB tethering needs the Share tweak (the app adds its repo); band control works on its own. Rootless, iOS 15+.</p>
 <p class="shots">$SHOTS</p>
+<p><small>The band you're on shows on the Wi-Fi icon at the top (circled), in every app.</small></p>
 <p><a class="b" href="sileo://source/${REPO_URL}">Add the repo to Sileo</a></p>
 <p>Or add this source in Sileo by hand: <code>${REPO_URL}</code></p>
 <p>Once it's installed, it's called <b>Tether &amp; Band</b> on the home screen.</p>

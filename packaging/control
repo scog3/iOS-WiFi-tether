@@ -11,4 +11,4 @@ Homepage: https://github.com/scog3/iOS-WiFi-tether
 Icon: @REPO_URL@packages/com.wifitether/icon.png
 SileoDepiction: @REPO_URL@packages/com.wifitether/depiction.json
 Depiction: @REPO_URL@packages/com.wifitether/depiction.html
-Description: Seamless USB tethering and Wi-Fi band control for jailbroken iPhones and iPads. Share your device's Wi-Fi or VPN with a computer over USB, and keep Wi-Fi on 5 GHz or 2.4 GHz even on routers that won't allow band splitting. USB tethering needs the Share tweak (the app adds its repo); band control works on its own. Rootless, iOS 15+.
+Description: Seamless USB tethering and Wi-Fi band control for jailbroken iPhones and iPads. Share your device's Wi-Fi or VPN with a computer over USB, and keep Wi-Fi on 5 GHz or 2.4 GHz even on routers that won't allow band splitting. The Wi-Fi icon shows which band you're on. USB tethering needs the Share tweak (the app adds its repo); band control works on its own. Rootless, iOS 15+.

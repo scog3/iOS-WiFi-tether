@@ -15,8 +15,9 @@ Each works on its own: use one, the other or both.
 <p align="center">
   <img src="screenshots/welcome.png" width="30%" alt="The welcome screen: the band on the Wi-Fi icon and the status notification, each with a switch">
   <img src="screenshots/tethering.png" width="30%" alt="Sharing Wi-Fi and the VPN over USB, with Force 5 GHz on, the band on the Wi-Fi icon and iOS's Personal Hotspot indicator">
-  <img src="screenshots/band-switch.png" width="30%" alt="Force 2.4 GHz on its own, with sharing off">
+  <img src="screenshots/band-switch.png" width="30%" alt="Force 2.4 GHz on its own, with sharing off; the band, 2.4, circled on the Wi-Fi icon">
 </p>
+<p align="center"><sub>Right: the band you're on shows on the Wi-Fi icon at the top (circled), in every app.</sub></p>
 
 ## Features
 
@@ -108,7 +109,8 @@ The band switcher needs nothing else.
 Updates then appear in Sileo automatically.
 
 **Or by hand:** download the latest `.deb` from the **[Releases](../../releases)** page in
-Safari on the device, open it in **Filza** and install it. For USB tethering, install
+Safari on the device, open it in **Filza** and install it. It resprings by itself a few
+seconds later. For USB tethering, install
 **Share** from `https://aminerostane.com/repo` as well.
 
 ## How to use

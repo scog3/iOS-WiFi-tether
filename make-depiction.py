@@ -26,7 +26,7 @@ def md(s):
 screenshots = [(p, t) for p, t in [
     ("screenshots/welcome.png", "The welcome screen: the band on the Wi-Fi icon and the status notification"),
     ("screenshots/tethering.png", "Sharing Wi-Fi and the VPN over USB, with Force 5 GHz on"),
-    ("screenshots/band-switch.png", "Force 2.4 GHz on its own, with sharing off"),
+    ("screenshots/band-switch.png", "Force 2.4 GHz on its own; the band, 2.4, circled on the Wi-Fi icon"),
 ] if os.path.exists(p)]
 
 details = (
@@ -49,8 +49,8 @@ details = (
     "Works on its own, without tethering or Share. Moving back is near-instant, with no "
     "disconnect, on iPhone X and older (A11 chip or older, iPads too). On newer devices that's new "
     "and untested; if it doesn't work there, Wi-Fi drops for about half a second each time.\n"
-    "- **See it at a glance.** The Wi-Fi icon shows the band (2.4, 5 or 6 under its signal arcs) "
-    "in every app, iOS's Personal Hotspot indicator shows while a computer is connected, and a quiet "
+    "- **See it at a glance.** The Wi-Fi icon shows the band (2.4, 5 or 6 under its signal arcs; "
+    "circled in the last screenshot) in every app, iOS's Personal Hotspot indicator shows while a computer is connected, and a quiet "
     "notification says what's on. Respring once after installing.\n"
     "- **No battery drain when it's off.**\n"
     "- **Free and open source** (MIT).\n\n"

@@ -46,10 +46,32 @@ if [ -f /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherRoam.dylib ];
     killall -9 wifid >/dev/null 2>&1 || true
 fi
 
-# The band on the Wi-Fi icon (src/bar) loads into apps as they start; the home
-# screen and apps already open pick it up after a respring.
-if [ -f /var/jb/Library/MobileSubstrate/DynamicLibraries/WiFiTetherBar.dylib ]; then
-    echo "Respring once so the band shows on the Wi-Fi icon (it can be switched off in the app's Settings)."
+# The Wi-Fi icon add-on (src/bar) and the Personal Hotspot indicator load
+# when SpringBoard and the apps start, so respring.
+#   - Installed by a package manager (Sileo, Zebra, Cydia: apt runs dpkg):
+#     it shows its own Respring button (asked for here too), and respringing
+#     now could cut it off mid-install, so leave it to that button.
+#   - Installed by opening the .deb (Filza) or with plain dpkg: respring by
+#     itself, a few seconds after the install finishes.
+MANAGED=0
+if [ -n "$CYDIA" ] || [ -n "$SILEO" ] || [ -n "$DPKG_FRONTEND_LOCKED" ]; then MANAGED=1; fi
+if [ $MANAGED = 0 ] && command -v ps >/dev/null 2>&1; then
+    pid=$PPID
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
+        case "$(ps -o comm= -p "$pid" 2>/dev/null)" in
+            *apt*|*Sileo*|*Zebra*|*Cydia*) MANAGED=1; break ;;
+        esac
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    done
+fi
+if [ -n "$CYDIA" ]; then
+    eval "echo 'finish:restart' >&${CYDIA%% *}" 2>/dev/null || true
+fi
+if [ $MANAGED = 1 ]; then
+    echo "Respring once so the Wi-Fi icon and the Personal Hotspot indicator load."
+else
+    echo "Respringing in a few seconds so the Wi-Fi icon and the Personal Hotspot indicator load."
+    nohup sh -c 'sleep 3; sbreload || killall -9 SpringBoard' </dev/null >/dev/null 2>&1 &
 fi
 
 exit 0

@@ -24,6 +24,13 @@
 added the old `https://scog3.github.io/iOS-WiFi-tether/` source, remove it and add the new
 one: the old one doesn't get updates any more.
 
+**Installing**
+
+- Installed by opening the `.deb` (Filza), it now resprings by itself a few seconds after
+  installing, so the Wi-Fi icon and the hotspot indicator load. Sileo and other package
+  managers show their Respring button as usual.
+- Installing it fresh (or again after removing it) shows the welcome screen again.
+
 **App**
 
 - **Welcome screen** the first time the app opens: the two options above, each with a
