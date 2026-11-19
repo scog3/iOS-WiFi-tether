@@ -11,4 +11,4 @@ Homepage: https://github.com/scog3/iOS-WiFi-tether
 Icon: @REPO_URL@packages/com.wifitether/icon.png
 SileoDepiction: @REPO_URL@packages/com.wifitether/depiction.json
 Depiction: @REPO_URL@packages/com.wifitether/depiction.html
-Description: Plug-and-play USB tethering of your iPhone or iPad's Wi-Fi or VPN to a computer, plus switches that keep Wi-Fi on 5 GHz or 2.4 GHz, even with routers that won't let you split the bands, like BT's Smart Hub 2, Sky's Max Hub, Google Nest Wifi and eero. No SIM or data plan needed (Wi-Fi-only iPads work too), nothing to set up on the computer, no speed cap; change VPN location while plugged in and the computer follows within a second or two. USB tethering needs the Share tweak (the app adds its repo in Sileo); the band switches work without it.
+Description: Seamless USB tethering and Wi-Fi band control for jailbroken iPhones and iPads. Share your device's Wi-Fi or VPN with a computer over USB, and keep Wi-Fi on 5 GHz or 2.4 GHz even on routers that won't allow band splitting. USB tethering needs the Share tweak (the app adds its repo); band control works on its own. Rootless, iOS 15+.

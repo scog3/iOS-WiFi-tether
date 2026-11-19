@@ -148,8 +148,7 @@ seconds), or *Connected* while sharing is off.
 
 1. Open **Tether & Band**.
 2. In the **Wi-Fi band** section, turn on **Force 5 GHz Wi-Fi** (faster) or
-   **Force 2.4 GHz Wi-Fi** (reaches further). Only one can be on: turning one on turns
-   the other off. Force 5 GHz asks you to confirm first.
+   **Force 2.4 GHz Wi-Fi** (reaches further). Force 5 GHz asks you to confirm first.
 
 The line under the switches says what it's doing, for example *On 5 GHz (−75 dBm)*. It
 keeps working in the background, with sharing on or off, until you turn the switch off.

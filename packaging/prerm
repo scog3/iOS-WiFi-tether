@@ -11,6 +11,9 @@ launchctl unload "$LD/com.wifitether.daemon.plist" >/dev/null 2>&1 || true
 
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
     uicache -u /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
+    # Installing it again shows the welcome screen again (iOS forgets the
+    # app's notification permission when it's removed, too).
+    rm -f /var/mobile/Library/WiFiTether/setup-done
 fi
 
 exit 0

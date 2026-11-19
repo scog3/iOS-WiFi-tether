@@ -602,7 +602,7 @@ static NSString *logText(void)
         @"On a Mac that's also on Wi-Fi, turn its Wi-Fi off, or drag %1$@ USB to the top in System Settings → "
         @"Network → ⋯ → Set Service Order.", d];
     NSString *band = [NSString stringWithFormat:
-        @"Turn on Force 5 GHz or Force 2.4 GHz. Only one can be on, and it works with sharing off.\n\n"
+        @"Turn on Force 5 GHz or Force 2.4 GHz. It works with sharing off.\n\n"
         @"Routers that use one name for both bands keep moving devices between them. When that happens, the "
         @"%@ is moved straight back, usually in well under a second without disconnecting. The first switch "
         @"after a while can take a few seconds while it finds the band.", d];

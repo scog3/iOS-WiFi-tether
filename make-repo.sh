@@ -63,13 +63,13 @@ code{background:rgba(127,127,127,.18);padding:2px 5px;border-radius:4px}a{color:
 .shots{display:flex;gap:8px}.shots img{width:calc(33.3% - 6px);max-width:180px;border-radius:10px}</style></head><body>
 <p><a href="../../">← ${TITLE_HTML}</a></p>
 <h1>WiFi Tether &amp; Band Switcher</h1>
-<p>Switches that keep a jailbroken iPhone or iPad's Wi-Fi on 5 GHz or 2.4 GHz, even with routers that won't let you split the bands, like BT's Smart Hub 2, Sky's Max Hub, Google Nest Wifi and eero, plus plug-and-play USB tethering of its Wi-Fi or VPN. No SIM or data plan needed, so Wi-Fi-only iPads work too, and nothing to set up on the computer. iPhone and iPad, rootless jailbreaks, iOS 15 and later.</p>
+<p>Seamless USB tethering and Wi-Fi band control for jailbroken iPhones and iPads. Share your device's Wi-Fi or VPN with a computer over USB, and keep Wi-Fi on 5 GHz or 2.4 GHz even on routers that won't allow band splitting. USB tethering needs the Share tweak (the app adds its repo); band control works on its own. Rootless, iOS 15+.</p>
 <p class="shots">$SHOTS</p>
 <p><a class="b" href="sileo://source/${REPO_URL}">Add the repo to Sileo</a></p>
 <p>Or add this source in Sileo by hand: <code>${REPO_URL}</code></p>
 <p>Once it's installed, it's called <b>Tether &amp; Band</b> on the home screen.</p>
 <h2>Wi-Fi band switcher</h2>
-<p>Open Tether &amp; Band and turn on <b>Force 5 GHz Wi-Fi</b> or <b>Force 2.4 GHz Wi-Fi</b>. Only one can be on. It works on its own: no other tweaks needed. The first switch after a while can take a few seconds; after that it's near-instant.</p>
+<p>Open Tether &amp; Band and turn on <b>Force 5 GHz Wi-Fi</b> or <b>Force 2.4 GHz Wi-Fi</b>. It works on its own: no other tweaks needed. The first switch after a while can take a few seconds; after that it's near-instant.</p>
 <h2>USB tethering</h2>
 <ol><li>Connect the iPhone or iPad to Wi-Fi.</li><li>Open Tether &amp; Band and turn on <b>Share Wi-Fi over USB</b>.</li><li>Plug it into the computer with a USB cable.</li></ol>
 <p>On a Mac that's also on Wi-Fi: <b>System Settings → Network → ⋯ → Set Service Order</b>, and drag <b>iPhone USB</b> above Wi-Fi (or turn the Mac's Wi-Fi off).</p>

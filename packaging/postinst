@@ -5,6 +5,13 @@ LD=/var/jb/Library/LaunchDaemons
 mkdir -p /var/mobile/Library/WiFiTether
 chown 501:501 /var/mobile/Library/WiFiTether
 
+# A fresh install (not an update: then dpkg passes the old version as $2)
+# shows the app's welcome screen again. Its answer is kept in the settings
+# folder, which removing the app leaves behind.
+if [ "$1" = "configure" ] && [ -z "$2" ]; then
+    rm -f /var/mobile/Library/WiFiTether/setup-done
+fi
+
 uicache -p /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
 
 # WiFi Tether needs the Share tweak. With Sileo, the app's "Add Share's Repo in
