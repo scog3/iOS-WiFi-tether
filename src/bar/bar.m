@@ -20,7 +20,7 @@
  *     layout instead.
  * Not on Wi-Fi, band unknown, or switched off in the app: iOS's own icon.
  *
- * In SpringBoard it also makes iOS's own blue "Personal Hotspot" indicator
+ * In SpringBoard it also makes iOS's own "Personal Hotspot" indicator
  * show while the computer is connected (hotspot.m).
  *
  * The band comes from wifitetherd, on the Darwin notification
@@ -244,7 +244,7 @@ static void wtSetState(uint64_t st)
     }
 }
 
-/* iOS's blue "Personal Hotspot" indicator while the computer is connected
+/* iOS's "Personal Hotspot" indicator while the computer is connected
  * (SpringBoard only; see hotspot.m). */
 #include "hotspot.m"
 

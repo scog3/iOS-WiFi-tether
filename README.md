@@ -13,8 +13,8 @@ things in one app, called **Tether & Band** on the home screen:
 Each works on its own: use one, the other or both.
 
 <p align="center">
-  <img src="screenshots/tethering-5ghz.png" width="30%" alt="Sharing Wi-Fi over USB with Force 5 GHz on">
-  <img src="screenshots/tethering-vpn.png" width="30%" alt="Sharing the iPhone's VPN over USB">
+  <img src="screenshots/welcome.png" width="30%" alt="The welcome screen: the band on the Wi-Fi icon and the status notification, each with a switch">
+  <img src="screenshots/tethering.png" width="30%" alt="Sharing Wi-Fi and the VPN over USB, with Force 5 GHz on, the band on the Wi-Fi icon and iOS's Personal Hotspot indicator">
   <img src="screenshots/band-switch.png" width="30%" alt="Force 2.4 GHz on its own, with sharing off">
 </p>
 
@@ -54,11 +54,11 @@ like a captive portal you've already signed in to on the phone.
   signal over **2.4**, **5** or **6**, in every app: the band it's actually on, whatever
   the switches say. Same colour and size as iOS's icon. On by default; switch it off in
   Settings.
-- **Blue Personal Hotspot indicator.** iOS's own, while the computer is connected, as when
-  sharing mobile data.
+- **Personal Hotspot indicator.** iOS's own coloured status bar with the link icon, while
+  the computer is connected, as when sharing mobile data.
 - **Status notification.** A quiet notification in Notification Centre. The title is the
-  band Wi-Fi is on now (*Wi-Fi band: 5 GHz*), then *USB sharing: ON*, *VPN pass-through:
-  OFF* and *Force band: 5 GHz* (or OFF). No sound or banner, and it updates by itself. On
+  band Wi-Fi is on now (*Wi-Fi band: 5 GHz*), then *USB sharing: ON (connected)*, *VPN
+  pass-through: ON (not connected)* and *Force band: 5 GHz* (or OFF). No sound or banner, and it updates by itself. On
   by default.
 
 The first time you open the app, a welcome screen shows both with a preview and a switch
@@ -93,8 +93,10 @@ The band switcher needs nothing else.
 
 **From Sileo (recommended):**
 
-1. In Sileo, add the source `https://scog3.github.io/iOS-WiFi-tether/`
-   (or open that page on the device and tap **Add to Sileo**).
+1. In Sileo, add the source `https://scog3.github.io/repo/`
+   (or open that page on the device and tap **Add to Sileo**). It's my repo for all my
+   projects. If you added the old `https://scog3.github.io/iOS-WiFi-tether/` source,
+   remove it: it doesn't get updates any more.
 2. Install **WiFi Tether & Band Switcher**. It shows up on the home screen as
    **Tether & Band**. Installing restarts iOS's Wi-Fi service, so Wi-Fi drops for a few
    seconds.
@@ -345,7 +347,7 @@ root) fills that gap whenever sharing is on:
    `applyStyleAttributes:` (colours) and `setNumberOfActiveBars:` (signal), which still
    run as before. If that view isn't there on some iOS version, it does nothing. `wifitetherd` publishes the band on the Darwin notification
    `com.wifitether.band`, so switching it off in Settings takes it away everywhere at once.
-   In SpringBoard the same add-on makes iOS's blue Personal Hotspot indicator show
+   In SpringBoard the same add-on makes iOS's Personal Hotspot indicator show
    (`src/bar/hotspot.m`). SpringBoard takes the tethering state from the cellular
    service (`-[SBTelephonyManager _setIsNetworkTethering:withNumberOfDevices:]`), which
    never says it's tethering when the hotspot shares Wi-Fi. `wifitetherd` posts the
@@ -365,12 +367,32 @@ Everything is removed again when you turn sharing off or uninstall.
 
 ## Build it yourself
 
-Every push to this repository builds the `.deb` on GitHub Actions (Ubuntu), publishes the
-Sileo repo with GitHub Pages (`make-repo.sh`; needs **Settings → Pages → Source: GitHub
-Actions**), and publishes the `.deb` as a release called *Tether & Band* with the version
-in `VERSION` and that version's notes from [CHANGELOG.md](CHANGELOG.md). Building the same
-version again replaces its `.deb`; bump `VERSION` and add a changelog entry to make a new
-release.
+Every push to this repository builds the `.deb` on GitHub Actions (Ubuntu), publishes it
+as a release called *Tether & Band* with the version in `VERSION` and that version's notes
+from [CHANGELOG.md](CHANGELOG.md), and adds it to the Sileo repo. Building the same version
+again replaces its `.deb`; bump `VERSION` and add a changelog entry to make a new release.
+
+The Sileo repo is a separate GitHub repository, one for all my projects
+(`REPO_REPOSITORY` and `REPO_URL` at the top of `.github/workflows/build.yml`). Each build
+runs `make-repo.sh` on a copy of it: that replaces this package's `.deb` (other packages
+are left alone), writes its pages under `packages/com.wifitether/`, rebuilds `Packages`,
+`Release` and the home page from every package in it, and pushes it back. Setting it up,
+once:
+
+1. Create a public repository called `repo`, with **Add a README file** ticked.
+2. In it, **Settings → Pages**: **Deploy from a branch**, branch **main**, folder **/ (root)**.
+   It's then at `https://<user>.github.io/repo/`.
+3. Make a token that can write to it: **Settings → Developer settings → Personal access
+   tokens → Fine-grained tokens → Generate new token**, **Only select repositories** →
+   `repo`, **Permissions → Contents: Read and write**.
+4. In this repository, **Settings → Secrets and variables → Actions → New repository
+   secret**: name `REPO_TOKEN`, value the token.
+
+Without the secret, the release still goes out and the run's summary says the repo wasn't
+updated. The repo's icon is `CydiaIcon.png` in it: the first build puts this app's icon
+there, and it's never replaced, so you can swap in your own. Another project can publish
+to the same repo with a copy of `make-repo.sh` (change its "This package" part) and the
+same workflow step.
 
 The hand-over add-on's arm64e part is built with Apple's compiler on a GitHub Mac runner
 (the `roam` job), because the open-source compiler on Linux can't make a proper arm64e

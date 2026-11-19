@@ -3,10 +3,15 @@
 CHANGELOG.md, in two forms:
   depiction.json - Sileo's own format (Details and Changelog tabs)
   depiction.html - a web page, for package managers that don't read Sileo's format
-Both go next to the file named on the command line (default repo/depiction.json)."""
+Both go next to the file named on the command line (default repo/depiction.json), in the
+package's folder in the repo, whose web address is the second argument (for the
+screenshots, which Sileo wants as full addresses)."""
 import html, json, os, re, sys
 
 out = sys.argv[1] if len(sys.argv) > 1 else "repo/depiction.json"
+base = sys.argv[2] if len(sys.argv) > 2 else "https://scog3.github.io/repo/packages/com.wifitether/"
+if not base.endswith("/"):
+    base += "/"
 text = open("CHANGELOG.md", encoding="utf-8").read()
 
 # "## 0.4.3" sections, newest first
@@ -17,12 +22,12 @@ def md(s):
     # Sileo's markdown wants list items on one line
     return re.sub(r"\n(?!\s*[-*] |\n)\s+", " ", s)
 
-# Where the repo is published (from the control file), for the screenshots
-base = re.search(r"^SileoDepiction: *(\S+/)depiction\.json",
-                 open("packaging/control", encoding="utf-8").read(), re.M).group(1)
-screenshots = [("screenshots/tethering-5ghz.png", "Sharing Wi-Fi over USB with Force 5 GHz on"),
-               ("screenshots/tethering-vpn.png", "Sharing the iPhone's VPN over USB"),
-               ("screenshots/band-switch.png", "Force 2.4 GHz on its own, with sharing off")]
+# Left to right; any that aren't in screenshots/ yet are left out.
+screenshots = [(p, t) for p, t in [
+    ("screenshots/welcome.png", "The welcome screen: the band on the Wi-Fi icon and the status notification"),
+    ("screenshots/tethering.png", "Sharing Wi-Fi and the VPN over USB, with Force 5 GHz on"),
+    ("screenshots/band-switch.png", "Force 2.4 GHz on its own, with sharing off"),
+] if os.path.exists(p)]
 
 details = (
     "**USB tethering, plus a Wi-Fi band switcher.** Plug your iPhone or iPad into a computer and the "
@@ -44,8 +49,9 @@ details = (
     "Works on its own, without tethering or Share. Moving back is near-instant, with no "
     "disconnect, on iPhone X and older (A11 chip or older, iPads too). On newer devices that's new "
     "and untested; if it doesn't work there, Wi-Fi drops for about half a second each time.\n"
-    "- **See it at a glance.** The band shows as a small 5 or 2.4 on the Wi-Fi icon in every app "
-    "(respring once after installing), and an optional quiet notification says what's on.\n"
+    "- **See it at a glance.** The Wi-Fi icon shows the band (2.4, 5 or 6 under its signal arcs) "
+    "in every app, iOS's Personal Hotspot indicator shows while a computer is connected, and a quiet "
+    "notification says what's on. Respring once after installing.\n"
     "- **No battery drain when it's off.**\n"
     "- **Free and open source** (MIT).\n\n"
     "USB tethering needs the **Share** tweak (the app has a button that adds its repo in Sileo); "

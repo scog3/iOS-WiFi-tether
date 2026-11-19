@@ -2613,26 +2613,30 @@ static NSString *indBandName(int band)
     return band == 2 ? @"2.4 GHz" : band == 5 ? @"5 GHz" : band == 6 ? @"6 GHz" : nil;
 }
 
+static long long g_misHosts;   /* devices iOS's hotspot service counts as connected (misLog) */
+
 /* What the notification says. The band Wi-Fi is on now as the title, then
- * the same three short lines every time (only ON/OFF or the band changes):
+ * the same three short lines every time:
  *   Wi-Fi band: 5 GHz
- *   USB sharing: ON
- *   VPN pass-through: OFF
+ *   USB sharing: ON (connected)
+ *   VPN pass-through: ON (not connected)
  *   Force band: 5 GHz
- * VPN pass-through is ON while a VPN is connected and USB sharing is on (the
- * computer's traffic goes through the VPN). Shown whenever the notification
- * is switched on. */
+ * USB sharing and VPN pass-through are ON or OFF with the Share Wi-Fi over USB
+ * switch (the VPN goes through whenever sharing is on); while ON, the
+ * brackets say whether a computer is connected (iOS's hotspot service counts
+ * it, as for its Personal Hotspot indicator) and whether a VPN is connected.
+ * Shown whenever the notification is switched on. */
 static NSDictionary *indSummaryNow(void)
 {
     int sharing = g_lastEnabled == 1;
     NSString *band = indBandName(g_indBand);
     NSString *force = !g_b5Running ? @"OFF" : g_b5Want == 2 ? @"2.4 GHz" : @"5 GHz";
+    NSString *usb = !sharing ? @"OFF" : g_misHosts > 0 ? @"ON (connected)" : @"ON (not connected)";
+    NSString *vpn = !sharing ? @"OFF" : (g_indVpn || g_indVpnShared) ? @"ON (connected)" : @"ON (not connected)";
     return @{ @"show": @YES,
               @"title": band ? [@"Wi-Fi band: " stringByAppendingString:band] : @"Wi-Fi: not connected",
               @"body": [NSString stringWithFormat:@"USB sharing: %@\nVPN pass-through: %@\nForce band: %@",
-                                                  sharing ? @"ON" : @"OFF",
-                                                  (g_indVpnShared || (g_indVpn && sharing)) ? @"ON" : @"OFF",
-                                                  force] };
+                                                  usb, vpn, force] };
 }
 
 /* After anything that can change the summary: write it, and if it stays
@@ -2777,6 +2781,8 @@ static void misLog(void)
 {
     static NSString *last;
     NSDictionary *d = scValue(@"com.apple.MobileInternetSharing");
+    id hosts = [d[@"Hosts"] isKindOfClass:[NSDictionary class]] ? d[@"Hosts"][@"Current"] : nil;
+    g_misHosts = [hosts respondsToSelector:@selector(longLongValue)] ? [hosts longLongValue] : 0;
     NSString *s = @"nothing";
     if (d && [NSJSONSerialization isValidJSONObject:d]) {
         NSData *j = [NSJSONSerialization dataWithJSONObject:d options:NSJSONWritingSortedKeys error:nil];

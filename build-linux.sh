@@ -150,7 +150,10 @@ ldid -Ssrc/daemon/entitlements.plist "$S/var/jb/usr/libexec/wifitether-vpn"
 ldid -S "$TW/WiFiTetherRoam.dylib"
 ldid -S "$TW/WiFiTetherBar.dylib"
 
-sed "s/@VERSION@/$PKGVERSION/g" packaging/control > "$S/DEBIAN/control"
+# Your Sileo repo's address (where make-repo.sh puts the package's pages).
+REPO_URL="${REPO_URL:-https://scog3.github.io/repo/}"
+case "$REPO_URL" in */) ;; *) REPO_URL="$REPO_URL/" ;; esac
+sed -e "s/@VERSION@/$PKGVERSION/g" -e "s|@REPO_URL@|$REPO_URL|g" packaging/control > "$S/DEBIAN/control"
 cp packaging/postinst packaging/prerm "$S/DEBIAN/"
 
 chmod 755 "$S/DEBIAN/postinst" "$S/DEBIAN/prerm" "$APP/WiFiTether" "$S/var/jb/usr/libexec/wifitetherd" \

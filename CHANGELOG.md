@@ -9,14 +9,20 @@
   icon's own colour and fits in the same space, so it looks at home on any status bar and
   any iPhone. It shows the band Wi-Fi is actually on, not what the switches are set to. On
   by default. Respring once after installing for it to appear.
-- **iOS's blue Personal Hotspot indicator** now shows while the computer is connected, as
-  it does when sharing mobile data. iOS only takes it from the phone's cellular service,
-  which never says it's sharing when the hotspot shares Wi-Fi. Respring once after
-  installing.
+- **iOS's Personal Hotspot indicator** (the coloured status bar with the link icon) now
+  shows while the computer is connected, as it does when sharing mobile data. iOS only
+  takes it from the phone's cellular service, which never says it's sharing when the
+  hotspot shares Wi-Fi. Respring once after installing.
 - **Status notification** (on by default): one quiet notification in Notification Centre. The
   title is the band Wi-Fi is on now (*Wi-Fi band: 5 GHz*), then three short lines: *USB
-  sharing: ON*, *VPN pass-through: OFF*, *Force band: 5 GHz*. Always the same lines, so
-  nothing jumps around. No sound or banner; it updates by itself.
+  sharing: ON (connected)*, *VPN pass-through: ON (not connected)*, *Force band: 5 GHz*.
+  USB sharing and VPN pass-through follow the Share Wi-Fi over USB switch; the brackets say
+  whether a computer, and a VPN, is connected. Always the same lines, so nothing jumps
+  around. No sound or banner; it updates by itself.
+
+**New Sileo source:** `https://scog3.github.io/repo/`, my repo for all my projects. If you
+added the old `https://scog3.github.io/iOS-WiFi-tether/` source, remove it and add the new
+one: the old one doesn't get updates any more.
 
 **App**
 

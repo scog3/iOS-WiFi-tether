@@ -363,7 +363,7 @@ static NSString *logText(void)
     if (vpn.length)
         [t appendFormat:@"===== vpn.log (end) =====\n%@\n",
                         vpn.length > 100000 ? [vpn substringFromIndex:vpn.length - 100000] : vpn];
-    /* The status bar add-on in SpringBoard: the blue hotspot indicator. */
+    /* The status bar add-on in SpringBoard: the Personal Hotspot indicator. */
     for (NSString *name in @[@"springboard.log.old", @"springboard.log"]) {
         NSString *s = readText([WT_DIR stringByAppendingPathComponent:name]);
         if (s.length)
@@ -727,7 +727,7 @@ static UIView *wtNotificationPreview(void)
     UILabel *title = wtLabel(15, UIFontWeightSemibold, UIColor.labelColor);
     title.text = @"Wi-Fi band: 5 GHz";
     UILabel *body = wtLabel(15, UIFontWeightRegular, UIColor.labelColor);
-    body.text = @"USB sharing: ON\nVPN pass-through: OFF\nForce band: 5 GHz";
+    body.text = @"USB sharing: ON (connected)\nVPN pass-through: ON (connected)\nForce band: 5 GHz";
     UIStackView *s = [[UIStackView alloc] initWithArrangedSubviews:@[head, title, body]];
     s.axis = UILayoutConstraintAxisVertical;
     s.spacing = 1;

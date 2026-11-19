@@ -1,5 +1,5 @@
 /*
- * iOS's blue "Personal Hotspot" indicator (included by bar.m; SpringBoard
+ * iOS's "Personal Hotspot" indicator (included by bar.m; SpringBoard
  * only).
  *
  * SpringBoard shows the indicator from its telephony manager's tethering
@@ -117,10 +117,10 @@ static void wtHotspotApply(NSString *why)
                                   : ((long long (*)(id, SEL))objc_msgSend)(tm, num);
     }
     Ivar iv = agg ? class_getInstanceVariable(object_getClass(agg), "_tetheringStatusBarStyleOverrideAssertion") : NULL;
-    NSString *blue = iv ? (object_getIvar(agg, iv) ? @"on" : @"off") : @"unknown";
+    NSString *shown = iv ? (object_getIvar(agg, iv) ? @"on" : @"off") : @"unknown";
     wtSBLog(@"%@: hotspot counts %lld; cellular service says %s (%lld); SpringBoard now: tethering %d, %lld "
-            @"device(s), blue indicator %@", why, g_hsCount, g_ctTether ? "tethering" : "not tethering",
-            g_ctCount, nowT, nowN, blue);
+            @"device(s), hotspot indicator %@", why, g_hsCount, g_ctTether ? "tethering" : "not tethering",
+            g_ctCount, nowT, nowN, shown);
 }
 
 static void wtHotspotStart(void)
@@ -141,7 +141,7 @@ static void wtHotspotStart(void)
         method_getArgumentType(m, 3, b, sizeof(b));
     }
     if (!(ret[0] == 'v' && strchr("Bc", a[0]) && a[0] && strchr("iIqQlL", b[0]) && b[0])) {
-        wtSBLog(@"blue hotspot indicator: SBTelephonyManager's tethering setter isn't here as expected "
+        wtSBLog(@"hotspot indicator: SBTelephonyManager's tethering setter isn't here as expected "
                 @"(%s); leaving it alone", m ? method_getTypeEncoding(m) : "missing");
         return;
     }
@@ -164,7 +164,7 @@ static void wtHotspotStart(void)
         return;
     notify_get_state(tok, &st);
     g_hsCount = (long long)st;
-    wtSBLog(@"blue hotspot indicator: ready (%s); hotspot counts %lld", method_getTypeEncoding(m), g_hsCount);
+    wtSBLog(@"hotspot indicator: ready (%s); hotspot counts %lld", method_getTypeEncoding(m), g_hsCount);
     if (g_hsCount > 0)   /* already connected (a respring while sharing) */
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             @try {
