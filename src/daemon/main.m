@@ -2553,6 +2553,7 @@ static void b5Update(void)
  * ------------------------------------------------------------------------- */
 #define WT_BANDLABEL   WT_DIR "/band-label"            /* "0": off; otherwise on */
 #define WT_STATUSNOTE  WT_DIR "/status-notification"   /* "0": off; otherwise on */
+#define WT_SETUP       WT_DIR "/setup-done"            /* the app's welcome screen has been answered */
 #define WT_SUMMARY     WT_DIR "/summary.plist"
 #define WT_BAND_NOTIFY "com.wifitether.band"
 #define WT_APP_ID      "com.wifitether.app"
@@ -2743,11 +2744,17 @@ static int indFlag(const char *path)
 /* The settings (from reconcile, which runs whenever the app changes one). */
 static void indUpdate(void)
 {
-    int label = indFlag(WT_BANDLABEL), note = indFlag(WT_STATUSNOTE);
+    /* Neither shows until the app's welcome screen has been answered: it's
+     * where the user picks them, and where iOS asks about notifications.
+     * (Before that, waking the app for the notification made iOS ask out of
+     * the blue, with no app on screen.) */
+    int setup = access(WT_SETUP, F_OK) == 0;
+    int label = setup && indFlag(WT_BANDLABEL), note = setup && indFlag(WT_STATUSNOTE);
 
     if (label == g_indLabel && note == g_indNote)
         return;
-    NSLog(@"wifitetherd: band on the Wi-Fi icon: %s; status notification: %s", label ? "on" : "off", note ? "on" : "off");
+    NSLog(@"wifitetherd: band on the Wi-Fi icon: %s; status notification: %s%s", label ? "on" : "off",
+          note ? "on" : "off", setup ? "" : " (until the app's welcome screen is answered)");
     g_indLabel = label;
     g_indNote = note;
     if (!g_indTimer) {

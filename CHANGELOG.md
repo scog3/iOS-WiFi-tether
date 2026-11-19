@@ -29,6 +29,8 @@ one: the old one doesn't get updates any more.
 - **Welcome screen** the first time the app opens: the two options above, each with a
   preview (the new Wi-Fi icon, and the notification) and a switch, both on to start with,
   plus a note on apps that check for jailbreaks. One tap on Continue and you're done.
+  Neither starts until then, and that's when iOS asks about notifications, not before
+  you've opened the app.
 - **Main screen:** band switching first, USB tethering underneath, marked as the only part
   that needs the Share tweak. Without Share, a short card in the tethering section says so,
   with the button that adds Share's repo in Sileo.

@@ -123,7 +123,6 @@ static BOOL statusNoteOn(void)   /* on unless switched off */
  * next change starts it afresh. */
 static NSDictionary *g_posted;   /* what's in Notification Centre, as far as this run knows */
 static BOOL          g_cleared;  /* removed once in this run */
-static BOOL          g_asked;    /* asked iOS for notifications in this run */
 
 static void updateStatusNotification(void (^done)(void))
 {
@@ -145,29 +144,35 @@ static void updateStatusNotification(void (^done)(void))
             done();
         return;
     }
-    if (!g_asked) {   /* once per run, before the first one (no question shows: see wtAskNotifications) */
-        g_asked = YES;
-        [c requestAuthorizationWithOptions:UNAuthorizationOptionAlert completionHandler:^(BOOL granted, NSError *e) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                updateStatusNotification(done);
-            });
-        }];
-        return;
-    }
-    UNMutableNotificationContent *n = [UNMutableNotificationContent new];
-    n.title = [sum[@"title"] description] ?: @"Tether & Band";
-    n.body = [sum[@"body"] description] ?: @"";
-    n.threadIdentifier = @"status";
-    n.interruptionLevel = UNNotificationInterruptionLevelPassive;   /* straight to the list, quietly */
-    UNNotificationRequest *r = [UNNotificationRequest requestWithIdentifier:@"status" content:n trigger:nil];
-    [c addNotificationRequest:r withCompletionHandler:^(NSError *e) {
+    /* Only if notifications are already allowed. This never asks iOS: that's
+     * done by the welcome screen's Continue or the switch in Settings, with
+     * the app on screen (this also runs in the background, when wifitetherd
+     * starts the app to update the notification). */
+    [c getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *ns) {
+        BOOL ok = ns.authorizationStatus == UNAuthorizationStatusAuthorized ||
+                  ns.authorizationStatus == UNAuthorizationStatusProvisional;
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (!e) {
-                g_posted = sum;
-                g_cleared = NO;
+            if (!ok) {
+                if (done)
+                    done();
+                return;
             }
-            if (done)
-                done();
+            UNMutableNotificationContent *n = [UNMutableNotificationContent new];
+            n.title = [sum[@"title"] description] ?: @"Tether & Band";
+            n.body = [sum[@"body"] description] ?: @"";
+            n.threadIdentifier = @"status";
+            n.interruptionLevel = UNNotificationInterruptionLevelPassive;   /* straight to the list, quietly */
+            UNNotificationRequest *r = [UNNotificationRequest requestWithIdentifier:@"status" content:n trigger:nil];
+            [c addNotificationRequest:r withCompletionHandler:^(NSError *e) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (!e) {
+                        g_posted = sum;
+                        g_cleared = NO;
+                    }
+                    if (done)
+                        done();
+                });
+            }];
         });
     }];
 }
@@ -259,10 +264,10 @@ static UIView *wtFooter(NSString *text)
 }
 
 /* ── Asking for notifications ───────────────────────────────────────────
- * Jailbreak apps are "system" apps to iOS, so there's no "Allow
- * Notifications?" question: iOS lists the app in Settings → Notifications
- * (Info.plist's SBAppUsesLocalNotifications) and this just says whether
- * they're allowed there. done runs on the main queue. */
+ * iOS lists the app in Settings → Notifications (Info.plist's
+ * SBAppUsesLocalNotifications) and may ask "Allow notifications?" the first
+ * time. Only called with the app on screen: the welcome screen's Continue,
+ * and the switch in Settings. done runs on the main queue. */
 static void wtAskNotifications(void (^done)(BOOL ok, NSError *error))
 {
     UNUserNotificationCenter *nc = UNUserNotificationCenter.currentNotificationCenter;
@@ -890,8 +895,8 @@ static UIView *wtNotificationPreview(void)
 
 - (void)done
 {
-    writeSetting(WT_BANDLABEL, _label.on);
     [@"1" writeToFile:WT_SETUP atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    writeSetting(WT_BANDLABEL, _label.on);   /* (tells the background service, which now shows them) */
     if (!_note.on) {
         writeSetting(WT_STATUSNOTE, NO);
         updateStatusNotification(nil);   /* takes it away, if it was there */
@@ -1740,13 +1745,28 @@ static NSString *untestedText(void)
  * app afresh (a suspended app wouldn't run when wifitetherd starts it). */
 static void updateThenQuit(UIApplication *app)
 {
-    __block UIBackgroundTaskIdentifier task = [app beginBackgroundTaskWithExpirationHandler:^{
-        exit(0);
-    }];
-    updateStatusNotification(^{
-        exit(0);
-    });
-    (void)task;
+    __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
+    void (^quit)(void) = ^{
+        if (app.applicationState == UIApplicationStateBackground)
+            exit(0);
+        if (task != UIBackgroundTaskInvalid) {   /* opened meanwhile: stay */
+            [app endBackgroundTask:task];
+            task = UIBackgroundTaskInvalid;
+        }
+    };
+    task = [app beginBackgroundTaskWithExpirationHandler:quit];
+    updateStatusNotification(quit);
+}
+
+/* The screen: at launch, or when an app started in the background (for the
+ * notification) is opened. */
+- (void)showScreen
+{
+    if (self.window)
+        return;
+    self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.window.rootViewController = [WTViewController new];
+    [self.window makeKeyAndVisible];
 }
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options
@@ -1757,10 +1777,18 @@ static void updateThenQuit(UIApplication *app)
         updateThenQuit(application);
         return YES;
     }
-    self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    self.window.rootViewController = [WTViewController new];
-    [self.window makeKeyAndVisible];
+    [self showScreen];
     return YES;
+}
+
+- (void)applicationWillEnterForeground:(UIApplication *)application
+{
+    [self showScreen];
+}
+
+- (void)applicationDidBecomeActive:(UIApplication *)application
+{
+    [self showScreen];
 }
 
 - (void)applicationDidEnterBackground:(UIApplication *)application
