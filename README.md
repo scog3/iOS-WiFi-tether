@@ -97,8 +97,7 @@ The band switcher needs nothing else.
 
 1. In Sileo, add the source `https://scog3.github.io/repo/`
    (or open that page on the device and tap **Add to Sileo**). It's my repo for all my
-   projects. If you added the old `https://scog3.github.io/iOS-WiFi-tether/` source,
-   remove it: it doesn't get updates any more.
+   projects.
 2. Install **WiFi Tether & Band Switcher**. It shows up on the home screen as
    **Tether & Band**. Installing restarts iOS's Wi-Fi service, so Wi-Fi drops for a few
    seconds.
