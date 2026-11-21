@@ -433,12 +433,14 @@ static int needfrag(int s, const struct ip *ip) {
 /* WiFi Tether: share only while the WiFi Tether switch is on (file missing = on)
  * and wifitetherd has linked our anchor into the ruleset (the anchor exists).
  * Until then wait quietly instead of failing every second. */
+/* WiFi Tether: Share Wi-Fi over USB, off until switched on in the app (as
+ * wifitetherd's isEnabled; since 1.7) */
 static int switch_on(void) {
 	FILE *f = fopen(WT_ENABLED, "r");
-	if (!f) return 1;
+	if (!f) return 0;
 	int c = fgetc(f);
 	fclose(f);
-	return c != '0';
+	return c == '1';
 }
 
 static int allowed(void) {
