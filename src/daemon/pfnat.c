@@ -174,8 +174,9 @@ static int filter_hook_index(u_int32_t *ticket)
     return -1;
 }
 
-/* Our rules in the main filter ruleset (see pfn_filter_hook_add). */
-#define WT_FILTER_RULES 3
+/* Our rules in the main filter ruleset (see pfn_filter_hook_add): 3, or 4
+ * with the VPN pass-through off. */
+static int g_filter_rules = 3;
 
 static int filter_hook_count(void)
 {
@@ -187,11 +188,13 @@ static int filter_hook_count(void)
 
 int pfn_filter_hook_present(void)
 {
-    return g_fd >= 0 && filter_hook_count() == WT_FILTER_RULES;
+    return g_fd >= 0 && filter_hook_count() == g_filter_rules;
 }
 
-/* Add one rule at the head of the main filter ruleset. */
-static int filter_add_head(struct pf_rule *r, const char *call, const char *what, char *err, size_t errlen)
+/* Add one rule at the head of the main filter ruleset; with pool_if, its
+ * route-to target is (pool_if pool_ip). */
+static int filter_add_head(struct pf_rule *r, const char *call, const char *pool_if, in_addr_t pool_ip,
+                           const char *what, char *err, size_t errlen)
 {
     struct pfioc_pooladdr pp;
     struct pfioc_rule pr;
@@ -201,6 +204,15 @@ static int filter_add_head(struct pf_rule *r, const char *call, const char *what
     if (ioctl(g_fd, DIOCBEGINADDRS, &pp) < 0) {
         ERR("%s: DIOCBEGINADDRS failed: %s", what, strerror(errno));
         return -1;
+    }
+    if (pool_if) {
+        pp.af = AF_INET;
+        strlcpy(pp.addr.ifname, pool_if, sizeof(pp.addr.ifname));
+        set_addrmask(&pp.addr.addr, pool_ip, 0xffffffff);
+        if (ioctl(g_fd, DIOCADDADDR, &pp) < 0) {
+            ERR("%s: DIOCADDADDR failed: %s", what, strerror(errno));
+            return -1;
+        }
     }
     if (filter_hook_index(&ticket) == -2) {
         ERR("%s: can't read filter rules: %s", what, strerror(errno));
@@ -229,6 +241,13 @@ static int filter_add_head(struct pf_rule *r, const char *call, const char *what
  *      changed: VPN on/off/switched and the old records were dropped) gets a
  *      TCP reset straight away, so the computer reconnects at once instead of
  *      retrying into nothing for about a minute.
+ *   B. Only with the VPN pass-through off, while a VPN is connected:
+ *      pass in quick on <lan_if> inet from <lan subnet> to ! <lan subnet>
+ *          route-to (<bypass_if> <bypass_gw>) keep state
+ *      With a full-tunnel VPN up, iOS routes everything into the VPN; this
+ *      sends the computer's traffic to the Wi-Fi router instead, where our
+ *      NAT rule on <bypass_if> applies, so it goes out over Wi-Fi as if there
+ *      were no VPN.
  *   2. anchor "/wifitether.vpn"           the VPN helper's rules
  *   3. pass in quick on <lan_if> inet proto tcp
  *          from <lan subnet> to ! <lan subnet> flags S/SA keep state
@@ -236,11 +255,13 @@ static int filter_add_head(struct pf_rule *r, const char *call, const char *what
  *      hits connections whose record was dropped.
  * Rules only see packets without a record; recorded ones skip all rules.
  */
-int pfn_filter_hook_add(const char *lan_if, in_addr_t lan_ip, in_addr_t lan_mask, char *err, size_t errlen)
+int pfn_filter_hook_add(const char *lan_if, in_addr_t lan_ip, in_addr_t lan_mask,
+                        const char *bypass_if, in_addr_t bypass_gw, char *err, size_t errlen)
 {
     struct pf_rule r;
 
     pfn_filter_hook_remove();
+    g_filter_rules = (bypass_if && bypass_if[0] && bypass_gw) ? 4 : 3;
 
     /* 3. record new connections */
     memset(&r, 0, sizeof(r));
@@ -256,15 +277,33 @@ int pfn_filter_hook_add(const char *lan_if, in_addr_t lan_ip, in_addr_t lan_mask
     set_addrmask(&r.src.addr, lan_ip & lan_mask, lan_mask);
     set_addrmask(&r.dst.addr, lan_ip & lan_mask, lan_mask);
     r.dst.neg = 1;
-    if (filter_add_head(&r, NULL, "Connection tracking rule", err, errlen) < 0)
+    if (filter_add_head(&r, NULL, NULL, 0, "Connection tracking rule", err, errlen) < 0)
         return -1;
 
     /* 2. VPN helper's anchor */
     memset(&r, 0, sizeof(r));
     r.action = PF_PASS;
     r.af = AF_INET;
-    if (filter_add_head(&r, "/" WT_VPN_ANCHOR, "VPN hook", err, errlen) < 0)
+    if (filter_add_head(&r, "/" WT_VPN_ANCHOR, NULL, 0, "VPN hook", err, errlen) < 0)
         return -1;
+
+    /* B. past the VPN, out over Wi-Fi (VPN pass-through off) */
+    if (g_filter_rules == 4) {
+        memset(&r, 0, sizeof(r));
+        r.action = PF_PASS;
+        r.direction = PF_IN;
+        r.quick = 1;
+        r.af = AF_INET;
+        r.keep_state = PF_STATE_NORMAL;
+        r.rt = PF_ROUTETO;
+        r.rpool.af = AF_INET;
+        strlcpy(r.ifname, lan_if, sizeof(r.ifname));
+        set_addrmask(&r.src.addr, lan_ip & lan_mask, lan_mask);
+        set_addrmask(&r.dst.addr, lan_ip & lan_mask, lan_mask);
+        r.dst.neg = 1;
+        if (filter_add_head(&r, NULL, bypass_if, bypass_gw, "Wi-Fi route (VPN pass-through off)", err, errlen) < 0)
+            return -1;
+    }
 
     /* 1. reset connections that lost their record */
     memset(&r, 0, sizeof(r));
@@ -280,9 +319,26 @@ int pfn_filter_hook_add(const char *lan_if, in_addr_t lan_ip, in_addr_t lan_mask
     set_addrmask(&r.src.addr, lan_ip & lan_mask, lan_mask);
     set_addrmask(&r.dst.addr, lan_ip & lan_mask, lan_mask);
     r.dst.neg = 1;
-    if (filter_add_head(&r, NULL, "Reset rule", err, errlen) < 0)
+    if (filter_add_head(&r, NULL, NULL, 0, "Reset rule", err, errlen) < 0)
         return -1;
     return 0;
+}
+
+/* Forget the computer's connections to the outside, so they start again on
+ * the new path (VPN pass-through switched on or off). TCP ones get a reset
+ * from rule 1 and reconnect straight away. */
+int pfn_kill_states(in_addr_t lan_ip, in_addr_t lan_mask)
+{
+    struct pfioc_state_kill k;
+
+    if (g_fd < 0)
+        return -1;
+    memset(&k, 0, sizeof(k));
+    k.psk_af = AF_INET;
+    set_addrmask(&k.psk_src.addr, lan_ip & lan_mask, lan_mask);
+    set_addrmask(&k.psk_dst.addr, lan_ip & lan_mask, lan_mask);
+    k.psk_dst.neg = 1;
+    return ioctl(g_fd, DIOCKILLSTATES, &k);
 }
 
 void pfn_filter_hook_remove(void)
@@ -476,7 +532,7 @@ int pfn_apply(const struct pfn_cfg *c, char *err, size_t errlen)
     }
     /* The Wi-Fi rules are in. A failing filter hook only affects VPN sharing
      * and fast reconnects; wifitetherd retries it and logs the reason. */
-    pfn_filter_hook_add(c->lan_if, c->lan_ip, c->lan_mask, NULL, 0);
+    pfn_filter_hook_add(c->lan_if, c->lan_ip, c->lan_mask, c->bypass_if, c->bypass_gw, NULL, 0);
     return 0;
 
 fail:

@@ -11,7 +11,8 @@
  * although iOS's hotspot service (misd) counts the computer as connected.
  *
  * wifitetherd posts misd's count (Darwin notification com.wifitether.hotspot,
- * state = devices connected). This wraps that setter so the state SpringBoard
+ * state = devices connected; 0 while the indicator is switched off in the
+ * app's Settings, which takes it away at once). This wraps that setter so the state SpringBoard
  * keeps says "tethering" when either the cellular service or the hotspot
  * service does, with the larger count; calls it again when the count changes;
  * then asks the status bar to update (-[SBStatusBarStateAggregator

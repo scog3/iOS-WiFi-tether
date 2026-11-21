@@ -56,7 +56,8 @@ like a captive portal you've already signed in to on the phone.
   the switches say. Same colour and size as iOS's icon. On by default; switch it off in
   Settings.
 - **Personal Hotspot indicator.** iOS's own coloured status bar with the link icon, while
-  the computer is connected, as when sharing mobile data.
+  the computer is connected, as when sharing mobile data. Switch it off in Settings if you'd
+  rather not have it.
 - **Status notification.** A quiet notification in Notification Centre. The title is the
   band Wi-Fi is on now (*Wi-Fi band: 5 GHz*), then *USB sharing: ON (connected)*, *VPN
   pass-through: ON (not connected)* and *Force band: 5 GHz* (or OFF). No sound or banner, and it updates by itself. On
@@ -198,6 +199,11 @@ worked and what didn't: [docs/band-switching-research.md](docs/band-switching-re
 
 Connect a VPN on the device and the computer's traffic follows it automatically.
 Disconnect it and traffic goes straight out through Wi-Fi again.
+
+To keep the computer off the VPN, turn off **VPN pass-through** in ☰ → **Settings**. The
+computer then goes straight out over Wi-Fi, with the Wi-Fi network's own DNS, while the
+device itself stays on the VPN. It takes effect straight away: the computer's open
+connections start again on the new path.
 
 - Works with any full-tunnel VPN that has an IPv4 address: VPN apps (WireGuard,
   sing-box / Hiddify and similar) and IKEv2 / built-in VPNs. Only IPv4 goes through the

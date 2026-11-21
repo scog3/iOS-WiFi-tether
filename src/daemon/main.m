@@ -334,6 +334,50 @@ static in_addr_t findDNS(void)
     return out;
 }
 
+/* The Wi-Fi network's own router and first DNS server (network order, 0 if
+ * unknown), from iOS's record of the Wi-Fi service. Needed while a VPN is the
+ * phone's main connection: iOS's global router and DNS are then the VPN's. */
+static void wifiService(const char *ifname, in_addr_t *router, in_addr_t *dns)
+{
+    static void *h;
+    static void *(*scCreate)(CFAllocatorRef, CFStringRef, void *, void *);
+    static CFArrayRef (*scKeys)(void *, CFStringRef);
+    *router = *dns = 0;
+    if (!h) {
+        h = dlopen("/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration", RTLD_LAZY);
+        if (h) {
+            scCreate = dlsym(h, "SCDynamicStoreCreate");
+            scKeys = dlsym(h, "SCDynamicStoreCopyKeyList");
+        }
+    }
+    if (!scCreate || !scKeys)
+        return;
+    void *store = scCreate(NULL, CFSTR("wifitetherd"), NULL, NULL);
+    if (!store)
+        return;
+    NSArray *keys = (__bridge_transfer NSArray *)scKeys(store, CFSTR("State:/Network/Service/[^/]+/IPv4"));
+    CFRelease((CFTypeRef)store);
+    for (NSString *k in keys) {
+        NSDictionary *v = scValue(k);
+        NSString *name = v[@"InterfaceName"], *r = v[@"Router"];
+        struct in_addr a;
+        if (![name isKindOfClass:[NSString class]] || strcmp(name.UTF8String, ifname) != 0)
+            continue;
+        if ([r isKindOfClass:[NSString class]] && inet_pton(AF_INET, r.UTF8String, &a) == 1)
+            *router = a.s_addr;
+        NSDictionary *d = scValue([[k stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"DNS"]);
+        for (NSString *s in d[@"ServerAddresses"]) {
+            if ([s isKindOfClass:[NSString class]] && inet_pton(AF_INET, s.UTF8String, &a) == 1 &&
+                (ntohl(a.s_addr) >> 24) != 127 && a.s_addr != 0) {
+                *dns = a.s_addr;
+                break;
+            }
+        }
+        if (*router)
+            break;
+    }
+}
+
 static int getFwd(void)
 {
     int v = 0;
@@ -2554,6 +2598,8 @@ static void b5Update(void)
 #define WT_BANDLABEL   WT_DIR "/band-label"            /* "0": off; otherwise on */
 #define WT_STATUSNOTE  WT_DIR "/status-notification"   /* "0": off; otherwise on */
 #define WT_SETUP       WT_DIR "/setup-done"            /* the app's welcome screen has been answered */
+#define WT_VPNPASS     WT_DIR "/vpn-passthrough"       /* "0": the computer doesn't go through the VPN */
+#define WT_HSIND       WT_DIR "/hotspot-indicator"     /* "0": no Personal Hotspot indicator */
 #define WT_SUMMARY     WT_DIR "/summary.plist"
 #define WT_BAND_NOTIFY "com.wifitether.band"
 #define WT_APP_ID      "com.wifitether.app"
@@ -2615,6 +2661,7 @@ static NSString *indBandName(int band)
 }
 
 static long long g_misHosts;   /* devices iOS's hotspot service counts as connected (misLog) */
+static int g_vpnPass = 1;      /* VPN pass-through switched on (reconcile) */
 
 /* What the notification says. The band Wi-Fi is on now as the title, then
  * the same three short lines every time:
@@ -2631,9 +2678,11 @@ static NSDictionary *indSummaryNow(void)
 {
     int sharing = g_lastEnabled == 1;
     NSString *band = indBandName(g_indBand);
-    NSString *force = !g_b5Running ? @"OFF" : g_b5Want == 2 ? @"2.4 GHz" : @"5 GHz";
+    int want5 = b5ReadFlag(WT_PREFER5), want24 = !want5 && b5ReadFlag(WT_PREFER24);
+    NSString *force = want5 ? @"5 GHz" : want24 ? @"2.4 GHz" : @"OFF";   /* the switches */
     NSString *usb = !sharing ? @"OFF" : g_misHosts > 0 ? @"ON (connected)" : @"ON (not connected)";
-    NSString *vpn = !sharing ? @"OFF" : (g_indVpn || g_indVpnShared) ? @"ON (connected)" : @"ON (not connected)";
+    NSString *vpn = !sharing || !g_vpnPass ? @"OFF"
+                  : (g_indVpn || g_indVpnShared) ? @"ON (connected)" : @"ON (not connected)";
     return @{ @"show": @YES,
               @"title": band ? [@"Wi-Fi band: " stringByAppendingString:band] : @"Wi-Fi: not connected",
               @"body": [NSString stringWithFormat:@"USB sharing: %@\nVPN pass-through: %@\nForce band: %@",
@@ -2803,15 +2852,27 @@ static void misLog(void)
         return;
     last = s;
     NSLog(@"wifitetherd: hotspot service reports: %@", s);
+}
 
-    /* The number of connected devices, for the status bar add-on in
-     * SpringBoard: iOS's blue hotspot indicator (src/bar/hotspot.m). */
+/* The number of connected devices, for the status bar add-on in SpringBoard,
+ * which shows iOS's Personal Hotspot indicator while it's above 0
+ * (src/bar/hotspot.m). 0 while the indicator is switched off in Settings, so
+ * it goes away at once. Posted when it changes, and once at start (SpringBoard
+ * reads the last value when it starts). */
+static void hsPublish(void)
+{
     static int tok = -1;
-    id cur = [d[@"Hosts"] isKindOfClass:[NSDictionary class]] ? d[@"Hosts"][@"Current"] : nil;
-    if (tok >= 0 || notify_register_check("com.wifitether.hotspot", &tok) == NOTIFY_STATUS_OK) {
-        notify_set_state(tok, [cur respondsToSelector:@selector(unsignedLongLongValue)] ? [cur unsignedLongLongValue] : 0);
-        notify_post("com.wifitether.hotspot");
-    }
+    static long long last = -1;
+    long long n = indFlag(WT_HSIND) ? g_misHosts : 0;
+    if (n == last)
+        return;
+    if (tok < 0 && notify_register_check("com.wifitether.hotspot", &tok) != NOTIFY_STATUS_OK)
+        return;
+    if (last >= 0 && (n == 0) != (last == 0))
+        NSLog(@"wifitetherd: Personal Hotspot indicator %s", n ? "on" : "off");
+    last = n;
+    notify_set_state(tok, (uint64_t)n);
+    notify_post("com.wifitether.hotspot");
 }
 
 static void reconcile(void)
@@ -2823,6 +2884,7 @@ static void reconcile(void)
 
         b5Update();
         indUpdate();
+        g_vpnPass = indFlag(WT_VPNPASS);
         static int lastShare = -1;
 
         /* Share just got installed: restart iOS's hotspot service so Share's
@@ -2835,6 +2897,7 @@ static void reconcile(void)
         }
         lastShare = share;
         misLog();
+        hsPublish();
 
         /* The hotspot service restarted (Share installed or updated, a crash...):
          * our connection to it is dead, so restart ourselves to reconnect. */
@@ -2958,18 +3021,48 @@ static void reconcile(void)
             char key[160], err[256] = "";
             int ok = 1, need;
             WTIf vpn = findVPN(&up);
-            writeVpnIf(vpn.ok ? vpn.name : "");
+            in_addr_t wgw = 0, wdns = 0;
+            int bypass = 0;
+            static int lastBypass = -1;
 
-            /* With a VPN connected, client traffic goes through it (src/vpn).
-             * A DNS server on the Wi-Fi network itself can't be reached through
-             * the VPN, so use a public one instead; it travels through the VPN. */
-            if (vpn.ok && (dns & up.mask) == (up.ip & up.mask))
+            /* VPN pass-through off (Settings), with a VPN connected: send the
+             * computer straight to the Wi-Fi router (pfnat.c, rule B), with the
+             * Wi-Fi network's own DNS. Without the router's address that can't
+             * be done, so it goes through the VPN as usual (logged once). */
+            if (vpn.ok && !g_vpnPass) {
+                wifiService(up.name, &wgw, &wdns);
+                bypass = wgw != 0;
+                static int warned;
+                if (!bypass && !warned++)
+                    NSLog(@"wifitetherd: VPN pass-through is off, but the Wi-Fi router's address isn't known; "
+                          "the computer goes through the VPN");
+            }
+            writeVpnIf(vpn.ok && !bypass ? vpn.name : "");
+
+            if (bypass) {
+                dns = wdns ? wdns : wgw;
+            } else if (vpn.ok && (dns & up.mask) == (up.ip & up.mask)) {
+                /* With a VPN connected, client traffic goes through it (src/vpn).
+                 * A DNS server on the Wi-Fi network itself can't be reached
+                 * through the VPN, so use a public one instead; it travels
+                 * through the VPN. */
                 dns = inet_addr("1.1.1.1");
+            }
+            if (bypass != lastBypass) {
+                if (bypass)
+                    NSLog(@"wifitetherd: VPN pass-through off: the computer goes straight out over Wi-Fi via %@ "
+                          "(DNS %@)", ipStr(wgw), ipStr(dns));
+                else if (lastBypass >= 0)
+                    NSLog(@"wifitetherd: the computer goes %s", vpn.ok ? "through the VPN again" : "out over Wi-Fi (no VPN)");
+                if (lastBypass >= 0 && g_applied)
+                    pfn_kill_states(lan.ip, lan.mask);   /* existing connections move to the new path */
+                lastBypass = bypass;
+            }
 
             st[@"dns"] = ipStr(dns);
             st[@"vpn"] = vpn.ok ? [NSString stringWithFormat:@"%s (%@)", vpn.name, ipStr(vpn.ip)] : @"";
-            snprintf(key, sizeof(key), "%s|%08x|%s|%08x|%08x|%08x",
-                     up.name, up.ip, lan.name, lan.ip, lan.mask, dns);
+            snprintf(key, sizeof(key), "%s|%08x|%s|%08x|%08x|%08x|%08x",
+                     up.name, up.ip, lan.name, lan.ip, lan.mask, dns, bypass ? wgw : 0);
 
             need = !g_applied || strcmp(key, g_key) != 0 || !pfn_present(g_anchor);
             if (need) {
@@ -2997,6 +3090,8 @@ static void reconcile(void)
                     c.lan_ip = lan.ip;
                     c.lan_mask = lan.mask;
                     c.dns_ip = dns;
+                    c.bypass_if = bypass ? up.name : NULL;
+                    c.bypass_gw = bypass ? wgw : 0;
                     if (pfn_apply(&c, err, sizeof(err)))
                         break;
 
@@ -3021,14 +3116,16 @@ static void reconcile(void)
             if (ok && g_applied && !pfn_filter_hook_present()) {
                 static char lastHookErr[256];
                 char herr[256] = "";
-                if (pfn_filter_hook_add(lan.name, lan.ip, lan.mask, herr, sizeof(herr)) != 0 && strcmp(herr, lastHookErr) != 0) {
+                if (pfn_filter_hook_add(lan.name, lan.ip, lan.mask, bypass ? up.name : NULL, bypass ? wgw : 0,
+                                        herr, sizeof(herr)) != 0 && strcmp(herr, lastHookErr) != 0) {
                     NSLog(@"wifitetherd: %s", herr);
                     strlcpy(lastHookErr, herr, sizeof(lastHookErr));
                 }
             }
-            st[@"vpnShared"] = @(vpn.ok && pfn_vpn_shared());
+            st[@"vpnShared"] = @(vpn.ok && !bypass && pfn_vpn_shared());
+            st[@"vpnBypass"] = @(bypass);
             g_indVpn = vpn.ok;
-            g_indVpnShared = vpn.ok && pfn_vpn_shared();
+            g_indVpnShared = vpn.ok && !bypass && pfn_vpn_shared();
 
             state = ok ? @"active" : @"error";
             if (!ok) {

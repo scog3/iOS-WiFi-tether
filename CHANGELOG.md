@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.7
+
+- **VPN pass-through switch** in ☰ → Settings, under USB tethering (on by default). Turn it
+  off and the computer goes straight out over Wi-Fi, with the Wi-Fi network's own DNS, even
+  while a VPN is connected on the device; the device itself stays on the VPN. It takes
+  effect straight away: the computer's open connections start again on the new path.
+- The status notification's *VPN pass-through* line follows the switch: OFF while it's
+  off.
+- The status card's VPN row says *Not shared (pass-through off)* while it's off.
+- **Personal Hotspot indicator switch** in ☰ → Settings, under Status bar, next to the
+  Wi-Fi icon switch (on by default). Off hides iOS's coloured bar with the link icon while
+  a computer is connected; it goes at once, no respring needed.
+- The status notification's *Force band* line now follows the Force switches themselves.
+
 ## 1.6
 
 **See what's on without opening the app**

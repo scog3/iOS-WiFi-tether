@@ -16,6 +16,8 @@ struct pfn_cfg {
     in_addr_t   lan_ip;   /* bridge IPv4 address */
     in_addr_t   lan_mask; /* bridge netmask */
     in_addr_t   dns_ip;   /* DNS server to send client lookups to */
+    const char *bypass_if;/* VPN pass-through off: send clients out here (Wi-Fi), past the VPN; NULL = no */
+    in_addr_t   bypass_gw;/* ...to this router (the Wi-Fi network's) */
 };
 
 int  pfn_open(char *err, size_t errlen);
@@ -26,7 +28,9 @@ int  pfn_apply(const struct pfn_cfg *cfg, char *err, size_t errlen);
 int  pfn_clear(const char *anchor, char *err, size_t errlen);
 int  pfn_present(const char *anchor);
 int  pfn_filter_hook_present(void);
-int  pfn_filter_hook_add(const char *lan_if, in_addr_t lan_ip, in_addr_t lan_mask, char *err, size_t errlen);
+int  pfn_filter_hook_add(const char *lan_if, in_addr_t lan_ip, in_addr_t lan_mask,
+                         const char *bypass_if, in_addr_t bypass_gw, char *err, size_t errlen);
+int  pfn_kill_states(in_addr_t lan_ip, in_addr_t lan_mask);
 void pfn_filter_hook_remove(void);
 int  pfn_vpn_shared(void);
 

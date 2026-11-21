@@ -22,6 +22,8 @@
 #define WT_BANDLABEL  WT_DIR @"/band-label"            /* "0": no band on the Wi-Fi icon */
 #define WT_STATUSNOTE WT_DIR @"/status-notification"   /* "0": no status notification */
 #define WT_SETUP      WT_DIR @"/setup-done"            /* the welcome screen has been answered */
+#define WT_VPNPASS    WT_DIR @"/vpn-passthrough"       /* "0": the computer doesn't go through the VPN */
+#define WT_HSIND      WT_DIR @"/hotspot-indicator"     /* "0": no Personal Hotspot indicator */
 #define WT_SUMMARY    WT_DIR @"/summary.plist"         /* what it says, written by wifitetherd */
 #define WT_REPO       @"https://github.com/scog3/iOS-WiFi-tether"
 
@@ -105,6 +107,18 @@ static void writeSetting(NSString *path, BOOL on)
 static BOOL bandLabelOn(void)   /* on unless switched off */
 {
     NSString *s = [NSString stringWithContentsOfFile:WT_BANDLABEL encoding:NSUTF8StringEncoding error:nil];
+    return s == nil || ![s hasPrefix:@"0"];
+}
+
+static BOOL hotspotIndicatorOn(void)   /* on unless switched off */
+{
+    NSString *s = [NSString stringWithContentsOfFile:WT_HSIND encoding:NSUTF8StringEncoding error:nil];
+    return s == nil || ![s hasPrefix:@"0"];
+}
+
+static BOOL vpnPassOn(void)   /* on unless switched off */
+{
+    NSString *s = [NSString stringWithContentsOfFile:WT_VPNPASS encoding:NSUTF8StringEncoding error:nil];
     return s == nil || ![s hasPrefix:@"0"];
 }
 
@@ -385,6 +399,8 @@ static NSString *logText(void)
 @implementation WTSettingsController {
     UISwitch *_label;
     UISwitch *_note;
+    UISwitch *_hsInd;
+    UISwitch *_vpnPass;
     UIButton *_share;
     UIButton *_copy;
 }
@@ -458,19 +474,31 @@ static NSString *logText(void)
     [_label addTarget:self action:@selector(labelToggled:) forControlEvents:UIControlEventValueChanged];
     _note = [UISwitch new];
     [_note addTarget:self action:@selector(noteToggled:) forControlEvents:UIControlEventValueChanged];
+    _hsInd = [UISwitch new];
+    [_hsInd addTarget:self action:@selector(hsIndToggled:) forControlEvents:UIControlEventValueChanged];
+    _vpnPass = [UISwitch new];
+    [_vpnPass addTarget:self action:@selector(vpnPassToggled:) forControlEvents:UIControlEventValueChanged];
 
     UILabel *labelFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
-    labelFoot.text = @"The Wi-Fi icon at the top of the screen shows the band: its arcs for the signal, with "
-                     @"2.4, 5 or 6 underneath, in every app. After installing or updating, respring once for it "
-                     @"to appear.\n\n"
-                     @"It loads into every app, so an app that looks for tweaks (some banking apps and games) "
-                     @"could notice it, even with this off. If one does, turn tweaks off for that app with Choicy.";
+    labelFoot.text = @"Band on the Wi-Fi icon: the Wi-Fi icon at the top of the screen shows 2.4, 5 or 6 under "
+                     @"its signal arcs, in every app.\n"
+                     @"Personal Hotspot indicator: iOS's coloured bar with the link icon while a computer is "
+                     @"connected, as when sharing mobile data.\n"
+                     @"After installing or updating, respring once for them to appear.\n\n"
+                     @"The Wi-Fi icon loads into every app, so an app that looks for tweaks (some banking apps and "
+                     @"games) could notice it, even with it off. If one does, turn tweaks off for that app with "
+                     @"Choicy.";
     UILabel *noteFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
     noteFoot.text = @"A quiet notification in Notification Centre: the band Wi-Fi is on now, then USB sharing, "
                     @"VPN pass-through and Force band. It updates by itself, with no sound or banner. If you "
                     @"clear it, it comes back at the next change.";
+    UILabel *vpnFoot = wtLabel(13, UIFontWeightRegular, UIColor.secondaryLabelColor);
+    vpnFoot.text = [NSString stringWithFormat:
+        @"While a VPN is connected on this %1$@, the computer's traffic goes through it too. Turn this off "
+        @"to send the computer straight out over Wi-Fi instead, without the VPN; this %1$@ itself still uses "
+        @"the VPN.", deviceWord()];
     UILabel *statusHead = wtHeader(@"Status bar"), *noteHead = wtHeader(@"Notification Centre"),
-            *logHead = wtHeader(@"Log");
+            *tetherHead = wtHeader(@"USB tethering"), *logHead = wtHeader(@"Log");
 
     _share = [self logButton:@"Share log file…" action:@selector(shareLog:)];
     _copy = [self logButton:@"Copy log" action:@selector(copyLog)];
@@ -478,15 +506,18 @@ static NSString *logText(void)
     logFoot.text = @"A record of what the app has been doing. If something isn't working, attach it to your "
                    @"report on GitHub. It contains your network addresses, so only share it with people you trust.";
 
-    UIView *labelBox = [self indented:labelFoot], *noteBox = [self indented:noteFoot];
+    UIView *labelBox = [self indented:labelFoot], *noteBox = [self indented:noteFoot], *vpnBox = [self indented:vpnFoot];
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        statusHead, wtCard(@[[self switchRow:@"Band on the Wi-Fi icon" on:_label]]), labelBox,
+        statusHead, wtCard(@[[self switchRow:@"Band on the Wi-Fi icon" on:_label],
+                             [self switchRow:@"Personal Hotspot indicator" on:_hsInd]]), labelBox,
         noteHead, wtCard(@[[self switchRow:@"Status notification" on:_note]]), noteBox,
+        tetherHead, wtCard(@[[self switchRow:@"VPN pass-through" on:_vpnPass]]), vpnBox,
         logHead, wtCard(@[_share, _copy]), [self indented:logFoot],
     ]];
     stack.spacing = 6;
     [stack setCustomSpacing:28 afterView:labelBox];
     [stack setCustomSpacing:28 afterView:noteBox];
+    [stack setCustomSpacing:28 afterView:vpnBox];
     wtScrollPage(self, stack);
 }
 
@@ -510,6 +541,8 @@ static NSString *logText(void)
     [super viewWillAppear:animated];
     _label.on = bandLabelOn();
     _note.on = statusNoteOn();
+    _hsInd.on = hotspotIndicatorOn();
+    _vpnPass.on = vpnPassOn();
 }
 
 - (void)done
@@ -520,6 +553,19 @@ static NSString *logText(void)
 - (void)labelToggled:(UISwitch *)sender
 {
     writeSetting(WT_BANDLABEL, sender.on);
+}
+
+/* Takes effect straight away: the background service tells SpringBoard. */
+- (void)hsIndToggled:(UISwitch *)sender
+{
+    writeSetting(WT_HSIND, sender.on);
+}
+
+/* Takes effect straight away: the computer's connections start again on the
+ * new path. */
+- (void)vpnPassToggled:(UISwitch *)sender
+{
+    writeSetting(WT_VPNPASS, sender.on);
 }
 
 - (void)noteToggled:(UISwitch *)sender
@@ -1585,6 +1631,8 @@ static NSString *untestedText(void)
         _vpn.text = @"Not connected";
     else if ([st[@"vpnShared"] boolValue])
         _vpn.text = [NSString stringWithFormat:@"Shared via %@", vpn];
+    else if ([st[@"vpnBypass"] boolValue])
+        _vpn.text = @"Not shared (pass-through off)";
     else if (!_toggle.on)
         _vpn.text = [NSString stringWithFormat:@"Connected: %@", vpn];
     else
