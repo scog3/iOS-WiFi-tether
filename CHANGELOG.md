@@ -13,6 +13,9 @@
   Wi-Fi icon switch (on by default). Off hides iOS's coloured bar with the link icon while
   a computer is connected; it goes at once, no respring needed.
 - The status notification's *Force band* line now follows the Force switches themselves.
+- **Share Wi-Fi over USB is off by default** on a new install, so the hotspot doesn't turn
+  on before you've opened the app; switch it on in the app when you want to tether.
+  Updating from an earlier version keeps it on if you were using it.
 
 ## 1.6
 

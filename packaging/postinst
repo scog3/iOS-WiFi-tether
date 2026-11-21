@@ -12,6 +12,15 @@ if [ "$1" = "configure" ] && [ -z "$2" ]; then
     rm -f /var/mobile/Library/WiFiTether/setup-done
 fi
 
+# Share Wi-Fi over USB is off until it's switched on in the app (since 1.7).
+# Before 1.7 it was on unless switched off, so someone updating from then who
+# never touched it has been using it: keep it on for them.
+if [ "$1" = "configure" ] && [ -n "$2" ] && [ ! -e /var/mobile/Library/WiFiTether/enabled ] &&
+   dpkg --compare-versions "$2" lt "1.7~"; then
+    echo 1 > /var/mobile/Library/WiFiTether/enabled
+    chown 501:501 /var/mobile/Library/WiFiTether/enabled
+fi
+
 uicache -p /var/jb/Applications/WiFiTether.app >/dev/null 2>&1 || true
 
 # WiFi Tether needs the Share tweak. With Sileo, the app's "Add Share's Repo in

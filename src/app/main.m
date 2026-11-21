@@ -1449,10 +1449,10 @@ static UIView *wtNotificationPreview(void)
     [self presentViewController:[WTWelcomeController new] animated:YES completion:nil];
 }
 
-- (BOOL)enabledSetting
+- (BOOL)enabledSetting   /* off until switched on (see the daemon's isEnabled) */
 {
     NSString *s = [NSString stringWithContentsOfFile:WT_ENABLED encoding:NSUTF8StringEncoding error:nil];
-    return s == nil || ![s hasPrefix:@"0"];
+    return [s hasPrefix:@"1"];
 }
 
 - (BOOL)prefer5Setting

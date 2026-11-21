@@ -61,15 +61,18 @@ static void ensureDir(void)
     chown(WT_DIR, MOBILE_UID, MOBILE_UID);
 }
 
+/* Share Wi-Fi over USB: off until it's switched on in the app (since 1.7;
+ * before, it was on by default, and the installer keeps it on for people
+ * updating from then). */
 static int isEnabled(void)
 {
     FILE *f = fopen(WT_ENABLED, "r");
     int c;
     if (!f)
-        return 1; /* on by default */
+        return 0;
     c = fgetc(f);
     fclose(f);
-    return c != '0';
+    return c == '1';
 }
 
 /* wantBridge = 0: Wi-Fi (en0). wantBridge = 1: hotspot bridge (bridge100 etc). */
